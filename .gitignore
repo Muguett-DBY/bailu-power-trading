@@ -12,3 +12,8 @@ __pycache__/
 *.pyc
 *.log
 .trial.txt
+
+# What the research agents download and draft; a local npm cache
+/docs/research/downloads/
+/docs/research/work/
+/.npm-cache/

@@ -44,6 +44,7 @@ const usage = `bailu ` + version + ` — 电力交易框架的工具。数字由
   bailu table "<问题>" <电价表文件>...  统计或比较电价表（CSV、Excel）
   bailu docs <文件夹或文件> "<问题>"    在政策文件里检索条款原文
   bailu compute "<算式>"              精确四则运算
+  bailu extract <文件>...             把政策文件（PDF、Word、文本）转成纯文本
   bailu selfcheck                     检查手册、电价表和计算器是否就绪
 
 通用选项：--home <目录> 指明框架所在目录（默认从当前目录向上查找，或取环境变量 BAILU_HOME）。
@@ -120,6 +121,9 @@ func run(args []string, out io.Writer) error {
 	if command == "selfcheck" {
 		return selfcheck(out, o.home)
 	}
+	if command == "extract" {
+		return extract(o.words, out)
+	}
 	if !slices.Contains([]string{"calc", "handbook", "tariff", "table", "docs", "compute"}, command) {
 		return fmt.Errorf("不认识的命令 %q，bailu --help 列出全部", command)
 	}
@@ -139,6 +143,39 @@ func run(args []string, out io.Writer) error {
 		return err
 	}
 	return answer(tools, command, turn, o, out)
+}
+
+// extract writes the text of documents, page after page, as the tool itself
+// reads them: a policy file made searchable, or kept as a library.
+func extract(paths []string, out io.Writer) error {
+	if len(paths) == 0 {
+		return errors.New("bailu extract 要给出至少一个文件（PDF、Word、文本）")
+	}
+	for i, path := range paths {
+		pages, err := extractDoc(path)
+		if err != nil {
+			return fmt.Errorf("%s：%w", path, err)
+		}
+		if i > 0 {
+			if _, err := io.WriteString(out, "\n\n"); err != nil {
+				return err
+			}
+		}
+		for j, page := range pages {
+			if j > 0 {
+				if _, err := io.WriteString(out, "\n\n"); err != nil {
+					return err
+				}
+			}
+			if _, err := io.WriteString(out, page.Text); err != nil {
+				return err
+			}
+		}
+		if _, err := io.WriteString(out, "\n"); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // turnOf makes the words of a command what the tools work on: the question,
