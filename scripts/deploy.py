@@ -102,6 +102,8 @@ def rules(project: Path, framework: Path) -> list:
 def deploy(project: Path, skills_dir: Path, with_skills: bool, with_tool: bool, force: bool) -> None:
     if not (FRAMEWORK / "AGENTS.md").is_file():
         raise SystemExit("框架不完整：找不到 AGENTS.md。请重新获取整个仓库。")
+    if not FRAMEWORK.is_relative_to(project):
+        raise SystemExit(f"框架不在要工作的项目文件夹里（{project}）。请先把框架克隆或复制到项目里，再在框架目录中运行本脚本。")
     manifest = {"framework": FRAMEWORK.relative_to(project).as_posix() if FRAMEWORK != project else ".", "skills": [], "skillsDir": skills_dir.relative_to(project).as_posix(), "files": []}
     if with_skills:
         skills_dir.mkdir(parents=True, exist_ok=True)
