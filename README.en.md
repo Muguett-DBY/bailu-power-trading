@@ -97,9 +97,13 @@ To build it from source (optional): in `tools/bailu/`, `go build -o bailu .`; th
 
 To add to or update the handbook, the pipeline is in `scripts/`: `fetch_cited_sources.py` downloads the official pages cited → `go test` (in `tools/bailu/`, with `BAILU_VERIFY_STAGING=1`) checks each quote of a research draft word for word → `overlap.py` lists overlaps → `merge_knowledge.py` merges. The research drafts are in `docs/research/handbook/`, each topic followed by the official sentences it rests on.
 
-## Agents it was tested with
+## What was tested
 
-See “What was tested” below.
+**Passed**: pi 1.6.1 with GLM 5.3 Flash (thinking level max) and with Xiaomi MiMo 2.6 Flash (thinking level max). In an empty folder, with nothing but the prompt above (once in Chinese, once in English), the agent fetched the framework, read the rules, deployed and checked it by itself, and what it reported matched what was on disk. Asked then for a spot settlement from figures in the question, and for Jiangsu's two-part transmission price together with what a nodal marginal price is, the agent answered through `bailu`, with tables and figures identical to the tool's output and the sources named.
+
+**Not tested**: Codex, WorkBuddy, Claude Code, Cursor and others. They get the same prompt and the same deployment script; an agent with another skills folder passes it with `--skills-dir`. Try it on yours and open an issue if something goes wrong.
+
+**The tool's own tests**: more than 150 tests in `tools/bailu`, covering the arithmetic of the 13 calculators (each with cases worked out by hand from the official documents), the reading of figures, follow-ups, the provincial price tables, about 150 handbook retrieval questions, the search for clauses in policy files, and that every topic and command a skill names exists.
 
 ## License and acknowledgements
 

@@ -85,7 +85,9 @@ def rules(project: Path, framework: Path) -> list:
     for name in ("AGENTS.md", "CLAUDE.md"):
         target = project / name
         if target.exists():
-            if FRAMEWORK.name not in target.read_text(encoding="utf-8", errors="replace"):
+            # The framework's own AGENTS.md is the rules when the framework
+            # is the project; another file of the project's is left as it is.
+            if "Bailu 电力交易框架" not in target.read_text(encoding="utf-8", errors="replace"):
                 print(f"{name} 已存在，没有改动它。请在其中加一行，让 agent 先读 {(framework / 'AGENTS.md').relative_to(project) if framework != project else 'AGENTS.md'}。")
             continue
         body = POINTER.format(rules=(framework / "AGENTS.md").relative_to(project).as_posix()) if framework != project else \

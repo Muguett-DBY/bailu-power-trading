@@ -97,9 +97,13 @@ LICENSE  NOTICE.md     MIT；第三方声明
 
 要补充或更新手册，流程在 `scripts/` 里：`fetch_cited_sources.py` 下载被引用的官方页面 → `go test`（在 `tools/bailu/` 里，设 `BAILU_VERIFY_STAGING=1`）逐字核对研究稿的引文 → `overlap.py` 查重 → `merge_knowledge.py` 并入。研究稿在 `docs/research/handbook/`，每个主题后面是它所依据的官方原文。
 
-## 已验证的 agent
+## 测试情况
 
-见下文「测试情况」。
+**实测通过的**：pi 1.6.1 配 GLM 5.3 Flash（思考强度 max）和小米 MiMo 2.6 Flash（思考强度 max）。在一个空文件夹里只发上面那段提示词（中文提示词和英文提示词各测了一次），agent 自己完成了获取、阅读守则、部署和自检，汇报的路径和结果与实际一致。部署后追问「合约电量1000万千瓦时……帮我算一下现货结算」和「江苏两部制输配电价是多少？另外什么是节点边际电价？」，agent 调用 `bailu` 作答，表格和数字与工具输出一致，出处写明。
+
+**没有测过的**：Codex、WorkBuddy、Claude Code、Cursor 等。它们走的是同一段提示词和同一个部署脚本，技能目录不同的话由 agent 自己用 `--skills-dir` 指明；请在你的 agent 上试一次，有问题欢迎提 issue。
+
+**工具自身的测试**：`tools/bailu` 里 150 多个测试，覆盖 13 种计算的算式（每种都有照官方文件手算的用例）、数字读取、追问、分省电价表、约 150 道手册检索题、政策文件的条款检索，以及「技能引用的主题和命令都存在」。
 
 ## 许可证与致谢
 
