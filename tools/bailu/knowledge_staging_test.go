@@ -229,6 +229,15 @@ func inProvision(document string, opens []opener, sentence, named string) bool {
 	for _, mark := range provisions(named) {
 		wanted[mark] = true
 	}
+	// A notice that prints amended wording under its own numbered items cites
+	// that item beside the article it amends: "附件 1 第六项，修改后的第五十六条".
+	if strings.Contains(named, "修改后的") {
+		for _, item := range amendedItem.FindAllStringSubmatch(named, -1) {
+			if number, ok := numeralValue(item[1]); ok {
+				wanted[strconv.Itoa(number)+"条"] = true
+			}
+		}
+	}
 	// A notice that numbers its paragraphs "一、二、三、" is cited by them as
 	// articles; where a document has articles, such a number opens a list. A
 	// notice may still mention an article of another document.
@@ -256,8 +265,8 @@ func inProvision(document string, opens []opener, sentence, named string) bool {
 var (
 	articles         = regexp.MustCompile(`第[零〇一二三四五六七八九十百两0-9]+条`)
 	articleOrChapter = regexp.MustCompile(`第([零〇一二三四五六七八九十百两0-9]+)([条章])`)
-	// The paragraphs of a notice open at a sentence's end or at the start of a line.
-	paragraph = regexp.MustCompile(`(?m)(?:^|[。：])([一二三四五六七八九十百]+)、`)
+	paragraph        = regexp.MustCompile(`(?:^|[。：])([一二三四五六七八九十百]+)、`)
+	amendedItem      = regexp.MustCompile(`第([零〇一二三四五六七八九十百两0-9]+)项`)
 )
 
 // markers names, in order and by number and kind, every provision a stretch of
@@ -293,6 +302,12 @@ func markers(text string, paragraphs bool) []string {
 // when it is the first of a document, or when it follows the one before it.
 func opensProvision(text string, at, reached, number int) bool {
 	if at == 0 || number == 1 || number == reached+1 {
+		return true
+	}
+	// The wording an amendment puts in place of an article starts with that
+	// article's number after "修改为：", in the middle of a sentence.
+	tail := strings.TrimRightFunc(text[:at], func(r rune) bool { return unicode.IsSpace(r) || strings.ContainsRune("：:", r) })
+	if strings.HasSuffix(tail, "修改为") {
 		return true
 	}
 	before, _ := utf8.DecodeLastRuneInString(text[:at])

@@ -58,8 +58,8 @@ skills/
   data/                6 data skills (from anthropics/knowledge-work-plugins, anthropics/financial-services)
   UPSTREAM.md          Where the upstream skills come from, at which commit, under which licence
 knowledge/
-  handbook/            The handbook: 31 files, 625 topics
-  documents/           Official documents: 87 full texts; catalogue.csv lists them
+  handbook/            The handbook: 42 files, 810 topics
+  documents/           Official documents: 137 full texts; catalogue.csv lists them
   data/tariffs.txt     34 provincial transmission price tables, coal capacity prices
 tools/bailu/           The Go source and tests of the bailu tool
 analysis/              The optional analysis layer: baseline forecasts, back-tests
@@ -94,8 +94,8 @@ How each command is written is in `AGENTS.md`. To build from source (optional): 
 
 ## How far the knowledge base can be trusted
 
-- Every topic of the handbook has keywords and a line naming the document and provision it rests on. The research merged into it holds 2,250 quotes, each looked up word for word in a copy of the official document downloaded for the purpose and checked to lie under the provision cited; all matched.
-- The content comes from documents published by the National Development and Reform Commission, the National Energy Administration and its regional offices, and provincial authorities; checked on 27 November 2026. Nationally it covers the spot, medium- and long-term, settlement, retail, renewable and ancillary-service markets and market members; provincially it covers 辽宁、上海、福建、江西、河南、湖北、广东、重庆、甘肃、青海、宁夏、新疆、南方区域. A provincial topic is named after its province, and says what it holds for and from when.
+- Every topic of the handbook has keywords and a line naming the document and provision it rests on. The research merged into it holds 3,005 quotes, each looked up word for word in a copy of the official document downloaded for the purpose and checked to lie under the provision cited; all matched.
+- The content comes from documents published by the National Development and Reform Commission, the National Energy Administration and its regional offices, and provincial authorities; checked on 27 November 2026. Nationally it covers the spot, medium- and long-term, settlement, retail, renewable and ancillary-service markets and market members; provincially it covers 山西、蒙东、辽宁、黑龙江、上海、江苏、浙江、安徽、福建、江西、河南、湖北、广东、广西、海南、重庆、贵州、云南、西藏、甘肃、青海、宁夏、新疆、南方区域. A provincial topic is named after its province, and says what it holds for and from when.
 - The document library under `knowledge/documents/` holds the full texts the handbook rests on; `bailu docs knowledge/documents "<question>"` searches them.
 - What is marked 【口径】 is practice of the trade without a document behind it, and the answer says so.
 - **What it does not have**: the hour-by-hour time-of-use prices of each province, fund surcharges, assessment rates that change often — and any live price. For these, put your province's current documents into the project and the agent answers from their text with `bailu docs`.

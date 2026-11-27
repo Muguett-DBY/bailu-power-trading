@@ -106,6 +106,14 @@ type tokenIndex struct {
 // took nothing from the three that are returned; more began to.
 const titleBonus = 2.0
 
+// titleShare is how much the terms of the question that a title holds grow the
+// score of its document, as a share of all the terms of the question that the
+// index knows: a title holding half of them doubles the score. It is applied to
+// a question that names a place only: the topics of that place all share its
+// name, and a long one that mentions the question's other words in passing
+// beside its own subject could else outrank the short one named by them.
+const titleShare = 2.0
+
 func newTokenIndex(docs ...tokenWeights) *tokenIndex {
 	index := &tokenIndex{docs: docs, freq: map[string]int{}}
 	for _, doc := range docs {
@@ -139,8 +147,12 @@ type tokenMatch struct {
 // more than a common one.
 func (x *tokenIndex) rank(query string, limit int) ([]tokenMatch, int) {
 	results := make([]tokenMatch, len(x.docs))
-	// most is the rarity of the rarest term of the question each document holds.
+	// most is the rarity of the rarest term of the question each document holds;
+	// inTitle how many of the question's terms its title holds. asked counts the
+	// terms of the question that some document holds.
 	most := make([]float64, len(x.docs))
+	inTitle := make([]int, len(x.docs))
+	asked := 0
 	for i := range results {
 		results[i].doc = i
 	}
@@ -151,6 +163,7 @@ func (x *tokenIndex) rank(query string, limit int) ([]tokenMatch, int) {
 		}
 		seen[token] = true
 		if frequency := x.freq[token]; frequency > 0 {
+			asked++
 			rarity := math.Log(1 + float64(len(x.docs))/float64(frequency))
 			for i := range results {
 				if weight := x.docs[i][token]; weight > 0 {
@@ -159,6 +172,7 @@ func (x *tokenIndex) rank(query string, limit int) ([]tokenMatch, int) {
 					most[i] = max(most[i], rarity)
 					if i < len(x.titles) && x.titles[i][token] > 0 {
 						results[i].score += rarity * titleBonus
+						inTitle[i]++
 					}
 				}
 			}
@@ -171,9 +185,16 @@ func (x *tokenIndex) rank(query string, limit int) ([]tokenMatch, int) {
 	for _, doc := range x.docs {
 		total += len(doc)
 	}
+	// Whether the question names a place that has topics of its own.
+	named := slices.ContainsFunc(x.regional, func(place string) bool { return place != "" && strings.Contains(query, place) })
 	for i := range results {
 		length := float64(len(x.docs[i])) * float64(len(x.docs)) / float64(total)
 		results[i].score *= (lengthK + 1) / (lengthK*(1-lengthB+lengthB*length) + 1)
+		// Of the topics of the place a question names, the one whose title holds
+		// more of its other terms is the topic asked for.
+		if named && asked > 0 {
+			results[i].score *= 1 + titleShare*float64(inTitle[i])/float64(asked)
+		}
 	}
 	// What something is, is said by the topic that defines it. Topics on one
 	// aspect of the same subject are narrower and read as closer to a short
@@ -201,7 +222,7 @@ func (x *tokenIndex) rank(query string, limit int) ([]tokenMatch, int) {
 	// when a topic of no place in particular holds a term of the question as
 	// specific as the rarest one it holds itself: the general topic then says
 	// what was asked for, and the provincial one adds how one province goes.
-	if !slices.ContainsFunc(x.regional, func(place string) bool { return place != "" && strings.Contains(query, place) }) {
+	if !named {
 		general := 0.0
 		for i, place := range x.regional {
 			if place == "" && results[i].score > 0 {
