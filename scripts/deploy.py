@@ -42,7 +42,7 @@ VERSION = "0.4.0"
 DOWNLOADS = [
     "https://gitee.com/Muguett/bailu-power-trading/releases/download/v{version}/{file}",
     "https://github.com/Muguett-DBY/bailu-power-trading/releases/download/v{version}/{file}",
-    "https://cdn.jsdelivr.net/gh/Muguett-DBY/bailu-power-trading@dist/{file}",
+    "https://cdn.jsdelivr.net/gh/Muguett-DBY/bailu-power-trading@artifacts-v{version}/{file}",
 ]
 MANIFEST = ".bailu-install.json"
 SKILL_GROUPS = ("power-trading", "office", "design", "data")

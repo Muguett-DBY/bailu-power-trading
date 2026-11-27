@@ -45,6 +45,39 @@ class PublishTest(unittest.TestCase):
                 publish.ensure_tag("v0.0.1")
         self.assertEqual(git.call_count, 2)
 
+    def test_cdn_publish_only_creates_an_immutable_versioned_tag(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            workspace = root / "workspace"
+            remote = root / "mirror.git"
+            output = workspace / ".release"
+            output.mkdir(parents=True)
+            command = publish.run
+            command("git", "init", "--initial-branch=main", cwd=workspace)
+            command("git", "init", "--bare", str(remote), cwd=root)
+            command("git", "config", "user.name", "Bailu test", cwd=workspace)
+            command("git", "config", "user.email", "bailu-test@example.invalid", cwd=workspace)
+            archive = output / "bailu-windows-amd64.zip"
+            archive.write_bytes(b"archive")
+
+            def isolated_run(*args, **options):
+                options.setdefault("cwd", workspace)
+                return command(*args, **options)
+
+            with patch.object(publish, "OUT", output), patch.object(publish, "GITHUB", remote.as_uri()), patch.object(
+                publish, "assets", return_value=[archive]
+            ), patch.object(publish, "run", side_effect=isolated_run):
+                publish.publish_artifact_tag("v0.0.1")
+                publish.publish_artifact_tag("v0.0.1")
+                archive.write_bytes(b"different archive")
+                with self.assertRaisesRegex(SystemExit, "already contains different files"):
+                    publish.publish_artifact_tag("v0.0.1")
+
+            ref = "refs/tags/artifacts-v0.0.1"
+            self.assertEqual(command("git", "for-each-ref", "--format=%(refname)", cwd=remote), ref)
+            self.assertEqual(command("git", "show", f"{ref}:VERSION.txt", cwd=remote), "v0.0.1")
+            self.assertEqual(command("git", "show", f"{ref}:{archive.name}", cwd=remote), "archive")
+
     def test_gitee_only_attaches_the_files_missing_from_the_release(self):
         with tempfile.TemporaryDirectory() as temporary:
             paths = [Path(temporary) / name for name in ("present.zip", "missing.zip", "SHA256SUMS")]

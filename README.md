@@ -14,7 +14,7 @@
 请现在把当前文件夹部署为 Bailu 电力交易工作区。记下当前目录的绝对路径，把部署脚本下载到项目内的临时文件。从 https://raw.githubusercontent.com/Muguett-DBY/bailu-power-trading/main/scripts/bootstrap.py 获取，失败、超时或返回网页时立即改用 https://gitee.com/Muguett/bailu-power-trading/raw/main/scripts/bootstrap.py 。每个下载最多尝试 15 秒，确认是 Python 脚本后，用现有的 Python 3.10+ 执行它，传入 --project 和刚记下的绝对路径，以及 --mirror github 或 --mirror gitee（与下载成功的镜像一致）。如果你的 Agent 使用专用的项目级技能目录，再传 --skills-dir .agents/skills 和 --skills-dir <那个目录>。脚本会自动克隆、切换镜像并验收。完成后读取项目的 AGENTS.md，告诉我工具路径和自检结果。只在当前项目内写入，两个镜像都失败时给出实际错误。
 ```
 
-部署脚本从先可用的镜像浅克隆源码，克隆失败或超时就换另一个。工具和 SHA‑256 清单优先从源码镜像取，失败后依次尝试另一镜像和 jsDelivr。成功后会检查工具和政策库，并把工具路径写入项目根目录的 `.bailu-install.json`。
+部署脚本从先可用的镜像浅克隆源码，克隆失败或超时就换另一个。工具和 SHA‑256 清单优先从源码镜像取，失败后依次尝试另一镜像和 jsDelivr 上该版本的 `artifacts-v<版本>` 标签。成功后会检查工具和政策库，并把工具路径写入项目根目录的 `.bailu-install.json`。
 
 部署需要 Git 和 Python 3.10+，用已有的 `python3`、`python` 或 Windows 的 `py -3` 即可。Windows、Linux 和 macOS 都有预编译工具。通过公开镜像部署无需仓库账号或 Go。可以重复传 `--skills-dir`。空项目可按所用宿主指定 `.agents/skills`（Codex）、`.codebuddy/skills`（WorkBuddy 的代码开发项目）、`.zcode/skills`（ZCode）或 `.claude/skills`（Claude Code）。项目已有相应宿主目录时，默认部署会一并放入对应的技能目录。
 

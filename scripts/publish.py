@@ -4,9 +4,8 @@
 
 Needs git, Go, uv, the GitHub command line tool (signed in) and, for the mirror,
 the variable GITEE_TOKEN with a personal access token of the Gitee account
-(scopes user_info and projects). Everything it makes goes to the releases of
-the two repositories and to the branch `dist`, which holds nothing but the
-built tools so that a content delivery network can serve them. Beside the
+(scopes user_info and projects). Tool archives are published to both releases
+and to a version-specific GitHub artifact tag for CDN downloads. Beside the
 archives go SHA256SUMS, which scripts/deploy.py checks an archive against
 before it runs it, and the notices of the Go modules built into the tool.
 """
@@ -18,6 +17,7 @@ import os
 import re
 import subprocess
 import sys
+import tempfile
 import urllib.error
 import urllib.request
 import zipfile
@@ -140,37 +140,31 @@ def github(version: str) -> None:
         "--notes-file", str(OUT / "notes.md"), "--verify-tag", *flags)
 
 
-def delivery_network(version: str) -> None:
-    """The branch `dist` holds the built tools and nothing else, so that
-    cdn.jsdelivr.net/gh/Muguett-DBY/bailu-power-trading@dist/ serves them.
-    The commit is made with plumbing on an index of its own: the working tree
-    and the index of the repository are not touched."""
-    staging = OUT / "dist"
-    staging.mkdir(exist_ok=True)
-    for old in staging.iterdir():
-        old.unlink()
-    for path in assets():
-        (staging / path.name).write_bytes(path.read_bytes())
-    (staging / "VERSION.txt").write_text(version + "\n", encoding="utf-8", newline="\n")
-    index = OUT / "dist-index"
-    own = {"GIT_INDEX_FILE": str(index)}
-    run("git", "read-tree", "--empty", env=own)
-    run("git", "--work-tree", str(staging), "add", "-f", "-A", ".", cwd=staging, env=own)
-    tree = run("git", "write-tree", env=own)
-    index.unlink(missing_ok=True)
-    upstream = run("git", "ls-remote", GITHUB, "refs/heads/dist")
-    parent = []
+def publish_artifact_tag(version: str) -> None:
+    """Publish a versioned CDN tree using an isolated work tree and index."""
+    tag = f"artifacts-{version}"
+    ref = f"refs/tags/{tag}"
+    with tempfile.TemporaryDirectory(dir=OUT) as stage:
+        staging = Path(stage) / "files"
+        staging.mkdir()
+        for path in assets():
+            (staging / path.name).write_bytes(path.read_bytes())
+        (staging / "VERSION.txt").write_text(version + "\n", encoding="utf-8", newline="\n")
+        own = {"GIT_INDEX_FILE": str(Path(stage) / "index")}
+        run("git", "read-tree", "--empty", env=own)
+        run("git", "--work-tree", str(staging), "add", "-f", "-A", ".", cwd=staging, env=own)
+        tree = run("git", "write-tree", env=own)
+    upstream = run("git", "ls-remote", "--refs", GITHUB, ref)
     if upstream:
-        run("git", "fetch", "--no-tags", GITHUB, "refs/heads/dist")
-        parent = ["-p", run("git", "rev-parse", "FETCH_HEAD")]
-    commit = run("git", "commit-tree", tree, *parent, "-m", f"bailu {version}")
-    run("git", "push", GITHUB, f"{commit}:refs/heads/dist")
-    # The network keeps what a branch served for hours; a release puts other
-    # files on the branch, so each is asked for afresh.
-    for path in [*assets(), staging / "VERSION.txt"]:
-        with urllib.request.urlopen(f"https://purge.jsdelivr.net/gh/Muguett-DBY/bailu-power-trading@dist/{path.name}", timeout=60) as response:
-            response.read()
-    print("dist branch:", commit[:7])
+        commit = upstream.split()[0]
+        run("git", "fetch", "--no-tags", "--no-write-fetch-head", GITHUB, ref)
+        if run("git", "rev-parse", f"{commit}^{{tree}}") != tree:
+            raise SystemExit(f"{tag} already contains different files")
+        print(f"CDN tag {tag} already published")
+        return
+    commit = run("git", "commit-tree", tree, "-m", f"bailu {version} artifacts")
+    run("git", "push", GITHUB, f"{commit}:{ref}")
+    print(f"CDN tag {tag} published")
 
 
 def gitee_call(token: str, path: str, data: bytes | None = None, content_type: str = "application/json", timeout: int = 60,
@@ -243,9 +237,9 @@ def main() -> None:
     commit = ensure_tag(version)
     run("git", "push", GITHUB + ".git", f"refs/tags/{version}")
     github(version)
+    publish_artifact_tag(version)
     run("git", "push", GITHUB + ".git", f"{commit}:refs/heads/main")
     gitee(version, commit, token)
-    delivery_network(version)
     print("published", version, ":", ", ".join(path.name for path in assets()), f"({len(archives)} archives)")
 
 
