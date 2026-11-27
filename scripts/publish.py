@@ -130,6 +130,11 @@ def delivery_network(version: str) -> None:
     commit = run("git", "commit-tree", tree, "-m", f"bailu {version}")
     run("git", "push", "--force", "origin", f"{commit}:refs/heads/dist")
     (OUT / "dist-index").unlink(missing_ok=True)
+    # The network keeps what a branch served for hours; a release puts other
+    # files on the branch, so each is asked for afresh.
+    for path in [*assets(), staging / "VERSION.txt"]:
+        with urllib.request.urlopen(f"https://purge.jsdelivr.net/gh/Muguett-DBY/bailu-power-trading@dist/{path.name}", timeout=60) as response:
+            response.read()
     print("dist branch:", commit[:7])
 
 
