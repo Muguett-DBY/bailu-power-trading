@@ -653,6 +653,7 @@ func TestLoadShiftIsReadFromTheUsersWords(t *testing.T) {
 		{"7-4 bounded by what can be moved", "移 2000 千瓦时，可移负荷上限 1200 千瓦时，从尖峰 1.2 元移到低谷 0.3 元，能省多少", []string{"每天收益 1080.00 元", "只能移 1200 千瓦时"}},
 		{"7-5 the shift raises the demand", "把 2000 千瓦时移进 2 小时的低谷窗口，尖峰 1.2 元，低谷 0.3 元，平移前最大需量 1500 千瓦，平移后最大需量 1900 千瓦，需量电价 40 元/千瓦·月，变压器容量 1600 千伏安，当月 30 天，负荷平移收益", []string{"按 30 天算月净收益 29560.00 元", "| 需量电费增加额 | 24440.00 元/月 |", "平移后的最大需量 1900 千瓦高于平移前的 1500 千瓦"}},
 		{"the month without a demand", "把 2000 千瓦时从尖峰 1.2 元移到低谷 0.3 元，按 30 天算，能省多少", []string{"每天收益 1800.00 元，按 30 天算月净收益 54000.00 元"}},
+		{"zero target price", "把 2000 千瓦时从尖峰 1.2 元移到低谷 0 元，能省多少", []string{"每天收益 2400.00 元", "| 2400.00 元 | 1.0000 | — |"}},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			answer := use(t, tradeTools(t), &chatMemory{}, "calculate", calculate("load_shift"), c.message)

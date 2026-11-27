@@ -34,7 +34,6 @@ type riskReport struct {
 	LowTail, Median, HighTail decimal.Decimal
 	// Tail is the mean of the worst share of the intervals: the expected price beyond the quantile.
 	Tail             decimal.Decimal
-	TailAt           string // where the tail begins, for a buyer the quantile above, for a seller the one below
 	Changes          decimal.Decimal
 	Daily            decimal.Decimal
 	Negative, Spikes int
@@ -118,18 +117,24 @@ func priceRisk(points []riskPoint, confidence decimal.Decimal, exposure *decimal
 	r.Low, r.LowAt, r.High, r.HighAt = lowest.value, lowest.at, highest.value, highest.at
 	sorted := slices.Clone(values)
 	slices.SortFunc(sorted, func(a, b decimal.Decimal) int { return a.Cmp(b) })
-	share := confidence.Div(hundred)
+	share := confidence.Shift(-2)
 	r.LowTail, r.Median, r.HighTail = quantile(sorted, one.Sub(share)), quantile(sorted, decimal.RequireFromString("0.5")), quantile(sorted, share)
 
-	// The tail is the worst (1 − confidence) share of the intervals: the most
-	// expensive ones for a buyer, the cheapest ones for a seller.
-	worst := int(one.Sub(share).Mul(decimal.NewFromInt(int64(len(sorted)))).Ceil().IntPart())
-	worst = max(worst, 1)
+	// Give the boundary observation only its share of the tail probability.
+	tailWeight := one.Sub(share).Mul(decimal.NewFromInt(int64(len(sorted))))
+	whole := int(tailWeight.IntPart())
+	beyond := tailWeight.Sub(decimal.NewFromInt(int64(whole)))
+	tailTotal, start, step := decimal.Zero, len(sorted)-1, -1
 	if selling {
-		r.Tail, r.TailAt = meanOf(sorted[:worst]), r.LowTail.StringFixed(2)
-	} else {
-		r.Tail, r.TailAt = meanOf(sorted[len(sorted)-worst:]), r.HighTail.StringFixed(2)
+		start, step = 0, 1
 	}
+	for i := 0; i < whole; i++ {
+		tailTotal = tailTotal.Add(sorted[start+i*step])
+	}
+	if !beyond.IsZero() {
+		tailTotal = tailTotal.Add(sorted[start+whole*step].Mul(beyond))
+	}
+	r.Tail = tailTotal.Div(tailWeight)
 	r.Changes = deviation(changes)
 	if len(order) > 1 {
 		means := make([]decimal.Decimal, len(order))
@@ -159,11 +164,7 @@ func priceRisk(points []riskPoint, confidence decimal.Decimal, exposure *decimal
 		r.Exposure = exposure
 	}
 	// What the tail costs beyond the mean for the volume exposed, interval by interval.
-	r.Extra = per.Mul(decimal.NewFromInt(int64(worst))).Mul(r.Tail.Sub(r.Mean))
-	if selling {
-		// A seller loses when the price falls; the tail is the cheap side.
-		r.Extra = per.Mul(decimal.NewFromInt(int64(worst))).Mul(r.Mean.Sub(r.Tail))
-	}
+	r.Extra = per.Mul(tailTotal.Sub(r.Mean.Mul(tailWeight)).Abs())
 	run, peak, peakAt := decimal.Zero, decimal.Zero, points[0].at
 	for _, p := range points {
 		step := r.Benchmark.Sub(p.value)
@@ -197,35 +198,33 @@ func riskCommand(o options, out io.Writer) error {
 		return fmt.Errorf("%s：%w", file.Name, err)
 	}
 	// The column measured: the one named, or the day-ahead prices when the table has them.
-	column := o.flag("column", "")
-	if strings.Contains(column, "实时") || strings.Contains(strings.ToLower(column), "real") {
-		column = "realtime"
-	} else if strings.Contains(column, "日前") || strings.Contains(strings.ToLower(column), "ahead") {
-		column = "dayahead"
-	} else {
-		column = "realtime"
-		if table.Ahead != "" {
-			column = "dayahead"
-		}
+	column := strings.TrimSpace(o.flag("column", ""))
+	var realtime bool
+	switch {
+	case column == "":
+		realtime = table.Ahead == ""
+	case strings.EqualFold(column, table.RealTime), strings.EqualFold(column, "real"), classifyHeader(column) == roleRealTime:
+		realtime = true
+	case strings.EqualFold(column, table.Ahead), strings.EqualFold(column, "ahead"), classifyHeader(column) == roleDayAhead:
+	default:
+		return errors.New("--column 只认日前、实时或表中的价格列名")
 	}
 	var points []riskPoint
-	var name string
+	name := table.Ahead
+	if realtime {
+		name = table.RealTime
+	}
+	if name == "" {
+		return fmt.Errorf("表中没有指定的价格列：%s", column)
+	}
 	for _, row := range table.Series.Rows {
 		value := row.DayAhead
-		if column == "realtime" {
+		if realtime {
 			value = row.RealTime
 		}
 		if value != nil {
 			points = append(points, riskPoint{*value, row.Date, row.position()})
 		}
-	}
-	if column == "realtime" {
-		name = table.RealTime
-	} else {
-		name = table.Ahead
-	}
-	if name == "" {
-		name = map[string]string{"realtime": "实时价格", "dayahead": "日前价格"}[column]
 	}
 	// The series is in yuan/kWh; the reply is in the unit the table itself was written in.
 	if table.Unit != "元/千瓦时" {
@@ -233,11 +232,11 @@ func riskCommand(o options, out io.Writer) error {
 			points[i].value = points[i].value.Mul(thousand)
 		}
 	}
-	confidence, _, err := parseNumber(o.flag("confidence", "95"))
+	confidence, percent, err := parseNumber(o.flag("confidence", "95"))
 	if err != nil {
 		return errors.New("--confidence 是百分数，例如 95 或 0.95")
 	}
-	if confidence.LessThan(one) {
+	if !percent && confidence.LessThan(one) {
 		confidence = confidence.Mul(hundred)
 	}
 	var exposure *decimal.Decimal
@@ -271,6 +270,11 @@ func riskCommand(o options, out io.Writer) error {
 	if err != nil {
 		return err
 	}
+	if exposure != nil && table.Unit == "元/千瓦时" {
+		// Convert monetary amounts from the displayed unit price times MWh to yuan.
+		report.Extra = report.Extra.Mul(thousand)
+		report.Drawdown = report.Drawdown.Mul(thousand)
+	}
 	report.Column, report.Unit = name, table.Unit
 	_, err = fmt.Fprintln(out, riskMarkdown(file.Name, report))
 	return err
@@ -288,18 +292,18 @@ func riskMarkdown(file string, r riskReport) string {
 		r.Low.StringFixed(2), r.LowAt, r.High.StringFixed(2), r.HighAt)
 	fmt.Fprintf(&out, "分位数：P%s %s，P50 %s，P%s %s（%s）。\n", hundred.Sub(r.Confidence).String(), r.LowTail.StringFixed(2), r.Median.StringFixed(2),
 		r.Confidence.String(), r.HighTail.StringFixed(2), unit)
-	share := one.Sub(r.Confidence.Div(hundred)).Mul(hundred)
+	share := hundred.Sub(r.Confidence).String()
 	if r.Selling {
 		fmt.Fprintf(&out, "VaR（%s%%，低价方向）：%s %s —— %s%% 的时段价格不低于它。\n", r.Confidence.String(), r.LowTail.StringFixed(2), unit, r.Confidence.String())
-		fmt.Fprintf(&out, "CVaR（%s%%，低价方向）：%s %s —— 最便宜的 %s%% 时段的平均价格。\n", r.Confidence.String(), r.Tail.StringFixed(2), unit, share.StringFixed(0))
+		fmt.Fprintf(&out, "CVaR（%s%%，低价方向）：%s %s —— 最便宜的 %s%% 时段的平均价格。\n", r.Confidence.String(), r.Tail.StringFixed(2), unit, share)
 	} else {
 		fmt.Fprintf(&out, "VaR（%s%%）：%s %s —— %s%% 的时段价格不高于它。\n", r.Confidence.String(), r.HighTail.StringFixed(2), unit, r.Confidence.String())
-		fmt.Fprintf(&out, "CVaR（%s%%）：%s %s —— 最贵的 %s%% 时段的平均价格。\n", r.Confidence.String(), r.Tail.StringFixed(2), unit, share.StringFixed(0))
+		fmt.Fprintf(&out, "CVaR（%s%%）：%s %s —— 最贵的 %s%% 时段的平均价格。\n", r.Confidence.String(), r.Tail.StringFixed(2), unit, share)
 	}
 	fmt.Fprintf(&out, "波动：相邻时段变动的标准差 %s；日均价在各天之间的标准差 %s。\n", r.Changes.StringFixed(2), r.Daily.StringFixed(2))
 	fmt.Fprintf(&out, "负电价 %d 个时段；尖峰 %d 个（高于均值加 3 倍标准差，即 %s）。\n", r.Negative, r.Spikes, r.SpikeLine.StringFixed(2))
 	if r.Exposure != nil {
-		fmt.Fprintf(&out, "尾部成本：按 %s 兆瓦时在各时段平均分摊，%s%% 的%s时段比按均价多花 %s。\n", r.Exposure.String(), share.StringFixed(0), worse, formatMoney(r.Extra))
+		fmt.Fprintf(&out, "尾部成本：按 %s 兆瓦时在各时段平均分摊，%s%% 的%s时段比按均价多花 %s。\n", r.Exposure.String(), share, worse, formatMoney(r.Extra))
 	}
 	measure := unit
 	if r.Exposure != nil {
@@ -311,6 +315,6 @@ func riskMarkdown(file string, r riskReport) string {
 	}
 	fmt.Fprintf(&out, "回撤：以 %s 为基准价，逐时段累计的%s从最高点回落，最大回撤 %s %s（%s 至 %s）。\n", r.Benchmark.StringFixed(2),
 		gain, r.Drawdown.StringFixed(2), measure, r.DrawdownFrom, r.DrawdownTo)
-	out.WriteString("\n说明：分位数按最近秩法取序列里实际存在的值，不做插值；这些是过去的情况，不是对未来的预测；天数少时尾部只能作参考。\n")
+	out.WriteString("\n说明：分位数用最近秩法。CVaR 按尾部比例计权，边界时段只计落入尾部的部分。这些指标来自历史数据，天数少时尾部只能作参考。\n")
 	return out.String()
 }

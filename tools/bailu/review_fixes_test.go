@@ -84,7 +84,7 @@ func TestTheDocumentSearchLooksPastTheFrameworksOwnFolders(t *testing.T) {
 	write("bailu-power-trading/skills/office/docx/SKILL.md", "---\nname: docx\n---\n\n申报价格上限之类的词。\n")
 	write("bailu-power-trading/docs/notes.md", "申报价格上限的笔记。")
 	write("我的政策.md", "# 我省规则\n\n第三条 申报价格上限为每千瓦时 1.5 元，下限为 -0.2 元。\n")
-	files, err := collectDocs(root)
+	files, _, err := collectDocs(root)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -95,7 +95,7 @@ func TestTheDocumentSearchLooksPastTheFrameworksOwnFolders(t *testing.T) {
 	if !slices.Equal(paths, []string{"我的政策.md"}) {
 		t.Errorf("the framework's own files were taken for policy documents: %q", paths)
 	}
-	if inside, err := collectDocs(copy); err != nil || len(inside) != 0 {
+	if inside, _, err := collectDocs(copy); err != nil || len(inside) != 0 {
 		t.Errorf("a search from the framework itself found %d files, %v", len(inside), err)
 	}
 	var out strings.Builder
@@ -137,7 +137,8 @@ func TestTheCommandLineTakesWhatTheReviewFoundMissing(t *testing.T) {
 	coreWants(t, coreSay(t, "docs", "申报价格上限是多少", path), "【rule.md 第三条】", "1.5 元")
 	coreWants(t, coreSay(t, "docs", path, "申报价格上限是多少"), "【rule.md 第三条】")
 	coreWants(t, coreSay(t, "docs", path, "申报价格上限", "是", "多少"), "【rule.md 第三条】")
-	coreRefuse(t, "要有文件夹或文件，和一个问题", "docs", "申报价格上限是多少")
+	coreWants(t, coreSay(t, "docs", path, "申报价格上限每元/兆瓦时"), "【rule.md 第三条】")
+	coreWants(t, coreSay(t, "docs", "重庆市电力中长期市场实施细则 绿电交易价格"), "重庆市电力中长期市场实施细则.md")
 	coreRefuse(t, "只认 CSV、Excel、PDF、Word、文本或 Markdown 文件：old.xls", "table", "哪个月最高", "old.xls")
 	coreRefuse(t, "只认 CSV、Excel、PDF、Word、文本或 Markdown 文件：old.xls", "docs", "old.xls", "申报价格上限是多少")
 	coreRefuse(t, "要有至少一个电价表文件，和一个问题", "table", "哪个月最高")

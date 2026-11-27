@@ -7,3 +7,5 @@
 *.woff2 binary
 *.ttf binary
 *.gguf binary
+# Preserve punctuation, blank lines and hard breaks in the transcribed archive.
+knowledge/ecnote/docs/*.md whitespace=-blank-at-eol,-blank-at-eof,-space-before-tab

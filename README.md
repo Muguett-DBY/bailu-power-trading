@@ -11,7 +11,7 @@
 在 Codex、Claude Code、WorkBuddy、Cursor、pi 等任何能运行命令、读写文件的 agent 里打开一个文件夹，把下面这句原样发给它：
 
 ```text
-请把当前文件夹配置成我的电力交易工作环境：从 Gitee（https://gitee.com/Muguett/bailu-power-trading.git ，打不开就改用 GitHub 的 https://github.com/Muguett-DBY/bailu-power-trading.git ；克隆时设置 GIT_TERMINAL_PROMPT=0 和 GCM_INTERACTIVE=never，要登录就当作打不开）把框架克隆到本文件夹（文件夹是空的就克隆到当前目录，否则克隆到 ./bailu-power-trading/），完整读其中的 AGENTS.md，在框架目录运行 python scripts/deploy.py 完成部署；一切都只放在本文件夹内，不要安装任何全局的东西，也不要改动本文件夹之外的文件；部署完成后把结果告诉我，任何一步失败就原样告诉我，不要跳过。
+请把当前文件夹配置成电力交易工作环境。记下它的绝对路径，从 https://gitee.com/Muguett/bailu-power-trading.git 克隆公开仓库，失败就试 https://github.com/Muguett-DBY/bailu-power-trading.git，禁用 Git 登录提示（GIT_TERMINAL_PROMPT=0、GCM_INTERACTIVE=never）。空文件夹直接克隆到当前目录，非空则克隆到 bailu-power-trading 子目录。读完仓库的 AGENTS.md，在仓库目录用现有的 Python 3.10+（python3、python 或 Windows 的 py -3）运行 scripts/deploy.py --project "<原文件夹绝对路径>"。用项目根目录 .bailu-install.json 里的 tool 路径运行 bailu selfcheck 和 bailu policy search --province 天津 --limit 1，确认工具和政策库就绪后，告诉我工具路径和如何开始用。所有操作都在原文件夹内，遇到失败请给出实际错误。
 ```
 
 agent 做完会告诉你「部署完成」和 `bailu` 工具的路径。之后在这个文件夹里的每一次新会话，agent 都会从项目的 `AGENTS.md` 读到工作守则。
@@ -24,7 +24,7 @@ agent 做完会告诉你「部署完成」和 `bailu` 工具的路径。之后�
 | --- | --- | --- |
 | 技能 | `.agents/skills/`（或你的 agent 自己的技能目录） | 29 个技能，agent 按任务自动加载 |
 | 规则 | 项目根目录的 `AGENTS.md`（Claude Code 另有 `CLAUDE.md` 指向它） | 告诉 agent 读框架的守则、`bailu` 在哪里 |
-| 框架 | `bailu-power-trading/` | 知识库、文件库、工具、脚本 |
+| 框架 | 项目根目录或 `bailu-power-trading/` | 手册、官方文件库、ECNote 快照、工具、脚本 |
 | 记录 | `.bailu-install.json` | 记下放入了什么，卸载时用 |
 
 卸载：在框架目录运行 `python scripts/deploy.py --uninstall`，它会移除放入的技能、规则文件和工具；框架文件夹本身保留，可以自行删除。
@@ -89,7 +89,9 @@ LICENSE  NOTICE.md     MIT；第三方声明
 | `bailu calc --message "<追问>" --earlier "<前面的原话>"` | 追问时沿用前面的数字 |
 | `bailu handbook "<问题>"` | 检索手册，返回主题原文和出处 |
 | `bailu tariff "<问题>"` | 查省级电网输配电价、线损率、煤电容量电价 |
-| `bailu docs <文件夹或文件> "<问题>"` | 在政策文件、账单、官方文件库里检索条款原文 |
+| `bailu docs "<问题>"` | 在随附的官方文件库检索条款原文，也可在问题前指定文件或文件夹 |
+| `bailu policy search "<关键词>" [--province 天津]` | 检索随附的 ECNote 政策快照，支持文号、地区、类目和正文短语 |
+| `bailu policy show <文档ID> ["<问题>"]` | 按目录命中 ID 查看镜像来源与正文，带问题时只返回相关摘录 |
 | `bailu check <表格文件>...` | 体检电价表、负荷表：缺值、重复、乱序、缺时段、负电价、离群值 |
 | `bailu table "<问题>" <电价表文件>...` | 统计或比较电价表（CSV、Excel） |
 | `bailu risk <电价表> [--mwh 1200]` | 风险指标：分位数、VaR、CVaR、波动、尾部成本、回撤 |
@@ -106,7 +108,8 @@ LICENSE  NOTICE.md     MIT；第三方声明
 
 - 手册的每个主题带关键词和「依据」一行，写明文件与条款。并入手册的研究稿共 3,314 条引文，逐条在下载到本地的官方原文里逐字查找，并核对它确实在所引的条款下，全部相符。其中 106 句所在的官方文件从本机连不上或取不回来，是用网页阅读工具读到后抄录留存、再核对的，这些来源的文件夹里各有一份说明。
 - 内容出自国家发展改革委、国家能源局及其派出机构、省级主管部门公开发布的文件，核对时间 2026 年 11 月 27 日。国家层面覆盖现货、中长期、结算、零售、新能源、辅助服务、市场成员；省份和区域覆盖 北京、天津、河北南网、冀北、山西、蒙东、辽宁、黑龙江、上海、江苏、浙江、安徽、福建、江西、山东、河南、湖北、广东、广西、海南、重庆、贵州、云南、西藏、甘肃、青海、宁夏、新疆、南方区域。省级主题的标题以省份或区域开头，写明适用范围和施行时间。吉林、四川、蒙西各只有一两个零星的主题，湖南、陕西还没有省级主题；天津只有 4 个主题、河北南网 8 个，多是华北区域的规则和省级文件的文号。
-- 官方文件库 `knowledge/documents/` 收着手册所依据的文件全文，`bailu docs knowledge/documents "问题"` 可以在里面检索。
+- 官方文件库 `knowledge/documents/` 收着手册所依据的 151 份文件全文，运行 `bailu docs "问题"` 即可检索。
+- `knowledge/ecnote/` 收录 2026-11-27 的 ECNote 早期补充快照，共 2,180 篇。内容和目录随 GitHub、Gitee 克隆一起到项目内。省份、日期和状态是收录标签，版本和适用范围以发布机关原文为准。使用 `bailu policy search --province 天津` 列出文件，或追加 `--text "购电侧结算电量"` 查正文短语，命中后用 `bailu policy show ID "要查的条款"` 看原文摘录。详情见 `knowledge/ecnote/README.md`。
 - 标着【口径】的是行业经验做法，没有官方文件依据，回答里会说明。
 - **没有的**：各省分时电价的逐时段数值、基金征收标准、经常调整的考核比例等，以及任何实时行情。这些要由你把本省现行文件放进项目，agent 用 `bailu docs` 按原文回答。
 - 政策文件年年修订，使用前留意主题里写的施行时间。

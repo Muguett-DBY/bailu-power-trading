@@ -16,6 +16,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"sync"
 	"unicode"
 	"unicode/utf8"
 
@@ -76,11 +77,13 @@ type docSearch struct {
 	Hits       []docHit
 	Files      int      `json:"files"`
 	Unreadable []string `json:"unreadable"`
+	Omitted    int      `json:"omitted,omitempty"`
 }
 
 // docLibrary holds the index of one project folder and rebuilds it when the
 // folder's file list, sizes or modification times change.
 type docLibrary struct {
+	mu         sync.Mutex
 	root       string
 	stamp      string
 	chunks     []docChunk
@@ -94,8 +97,9 @@ func isFramework(dir string) bool {
 	return err == nil
 }
 
-func collectDocs(root string) ([]docFile, error) {
+func collectDocs(root string) ([]docFile, int, error) {
 	var files []docFile
+	var omitted int
 	// A search that starts at the framework itself looks past its own folders; one
 	// that starts above a copy of it does not go into the copy.
 	inside := isFramework(root)
@@ -115,20 +119,30 @@ func collectDocs(root string) ([]docFile, error) {
 			}
 			return nil
 		}
-		if !docExtensions[strings.ToLower(filepath.Ext(entry.Name()))] || len(files) == docMaxFiles {
+		if !docExtensions[strings.ToLower(filepath.Ext(entry.Name()))] {
+			return nil
+		}
+		if len(files) == docMaxFiles {
+			if entry.Type().IsRegular() {
+				omitted++
+			}
 			return nil
 		}
 		info, err := entry.Info()
 		if err != nil {
 			return err
 		}
-		if !info.Mode().IsRegular() || info.Size() > docMaxBytes {
+		if !info.Mode().IsRegular() {
+			return nil
+		}
+		if info.Size() > docMaxBytes {
+			omitted++
 			return nil
 		}
 		files = append(files, docFile{Path: relative, Abs: path, Size: info.Size(), Mtime: info.ModTime().UnixMilli()})
 		return nil
 	})
-	return files, err
+	return files, omitted, err
 }
 
 func docStamp(files []docFile) string {
@@ -146,7 +160,7 @@ func docText(file docFile, cache string) ([]docPage, error) {
 	cached := filepath.Join(cache, hex.EncodeToString(sum[:16])+".txt")
 	header := strconv.FormatInt(file.Size, 10) + " " + strconv.FormatInt(file.Mtime, 10)
 	if body, err := os.ReadFile(cached); err == nil {
-		if head, pages, found := strings.Cut(string(body), "\n"); found && head == header {
+		if pages, found := strings.CutPrefix(string(body), header); found && (pages == "" || strings.HasPrefix(pages, docPageMark)) {
 			return cachedPages(pages), nil
 		}
 	}
@@ -225,7 +239,7 @@ var (
 	articleStart = regexp.MustCompile(`^(?:第[一二三四五六七八九十百零〇\d]+条|（[一二三四五六七八九十]+）)`)
 	provision    = regexp.MustCompile(`^第[一二三四五六七八九十百零〇\d]+条`)
 	// numberedItem opens an entry of a numbered list, as a glossary is set out.
-	numberedItem = regexp.MustCompile(`^\d{1,3}[．、]|^\d{1,3}\.[^\d.][^：:]{0,40}[：:]`)
+	numberedItem = regexp.MustCompile(`^(\d{1,3})(?:[．、]|\.[^\d.\r\n][^：:\r\n]{0,40}[：:])`)
 	// entryAfterStop is a provision or a numbered entry that follows a full
 	// stop: "……的增量。8．分区边际电价……", "……出清。第三十九条……".
 	entryAfterStop = regexp.MustCompile(`([。；;？])\s*((?:第[一二三四五六七八九十百零〇\d]+条|\d{1,3}[．、]))`)
@@ -356,14 +370,14 @@ func splitChunks(text string, limit int) []string {
 func (l *docLibrary) build(ctx context.Context, cache string, files []docFile) error {
 	var chunks []docChunk
 	var docs []tokenWeights
-	l.unreadable = nil
+	var unreadable []string
 	for _, file := range files {
 		if err := ctx.Err(); err != nil {
 			return err
 		}
 		pages, err := docText(file, cache)
 		if err != nil {
-			l.unreadable = append(l.unreadable, file.Path)
+			unreadable = append(unreadable, file.Path)
 			continue
 		}
 		// A scan or an empty file has nothing to search; say so instead of staying silent.
@@ -373,10 +387,10 @@ func (l *docLibrary) build(ctx context.Context, cache string, files []docFile) e
 				docs = append(docs, chunkTokens(chunk))
 			}
 		} else {
-			l.unreadable = append(l.unreadable, file.Path)
+			unreadable = append(unreadable, file.Path)
 		}
 	}
-	l.chunks, l.index = chunks, newTokenIndex(docs...)
+	l.chunks, l.index, l.unreadable = chunks, newTokenIndex(docs...), unreadable
 	return nil
 }
 
@@ -419,8 +433,8 @@ func entryLabel(text string) string {
 	if article := provision.FindString(text); article != "" {
 		return article
 	}
-	if number := numberedItem.FindString(text); number != "" {
-		return "第" + strings.TrimRight(number, "．.、") + "项"
+	if match := numberedItem.FindStringSubmatch(text); match != nil {
+		return "第" + match[1] + "项"
 	}
 	return ""
 }
@@ -476,18 +490,25 @@ func definedTerm(question string) string {
 // opensWithTerm is 1 when a passage begins with a term, past the number that
 // may stand before it ("7．节点边际电价（LMP）：……"), and 0 when it does not.
 func opensWithTerm(text, term string) int {
-	if strings.HasPrefix(strings.TrimSpace(numberedItem.ReplaceAllString(strings.TrimSpace(text), "")), term) {
+	text = strings.TrimSpace(text)
+	if match := numberedItem.FindStringSubmatchIndex(text); match != nil {
+		_, separatorWidth := utf8.DecodeRuneInString(text[match[3]:])
+		text = strings.TrimSpace(text[match[3]+separatorWidth:])
+	}
+	if strings.HasPrefix(text, term) {
 		return 1
 	}
 	return 0
 }
 
 func (l *docLibrary) search(ctx context.Context, root, cache, query string, limit int, share float64) (docSearch, error) {
-	files, err := collectDocs(root)
+	files, omitted, err := collectDocs(root)
 	if err != nil {
 		return docSearch{}, err
 	}
-	result := docSearch{Files: len(files)}
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	result := docSearch{Files: len(files), Omitted: omitted}
 	if stamp := docStamp(files); stamp != l.stamp || root != l.root {
 		if err := l.build(ctx, cache, files); err != nil {
 			return docSearch{}, err

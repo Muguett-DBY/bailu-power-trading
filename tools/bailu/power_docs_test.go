@@ -15,6 +15,23 @@ import (
 	"golang.org/x/text/transform"
 )
 
+func TestDocCachePreservesFirstPage(t *testing.T) {
+	t.Parallel()
+	path := filepath.Join(t.TempDir(), "policy.md")
+	const text = "第一条 结算周期为自然月。\n"
+	if err := os.WriteFile(path, []byte(text), 0600); err != nil {
+		t.Fatal(err)
+	}
+	file := docFile{Abs: path, Size: int64(len(text))}
+	cache := t.TempDir()
+	for range 2 {
+		pages, err := docText(file, cache)
+		if err != nil || len(pages) != 1 || pages[0].Text != text {
+			t.Fatalf("pages = %+v, err = %v", pages, err)
+		}
+	}
+}
+
 // writeTestPDF writes the smallest PDF the reader accepts: one page per line.
 func writeTestPDF(t *testing.T, path string, lines ...string) {
 	t.Helper()
@@ -203,6 +220,52 @@ func TestDocLibraryReportsDocumentsItCannotRead(t *testing.T) {
 	}
 	if found, _ := library.search(context.Background(), root, filepath.Join(t.TempDir(), "index"), "完全无关", 3, 0); len(found.Hits) != 0 {
 		t.Errorf("an unrelated query should find nothing: %+v", found.Hits)
+	}
+}
+
+func TestDocLibraryReportsUnsearchedFiles(t *testing.T) {
+	root := t.TempDir()
+	for i := 0; i <= docMaxFiles; i++ {
+		writeFile(t, filepath.Join(root, fmt.Sprintf("%03d.md", i)), "申报价格上限以省内规则为准。", "")
+	}
+	flow := &powerFlow{docs: &docLibrary{}, index: t.TempDir()}
+	turn := powerTurn{project: root, emit: func(string, string) {}}
+	found, notes, err := flow.documents(context.Background(), turn, "申报价格上限")
+	if err != nil || len(found) == 0 {
+		t.Fatalf("search returned %d hits, error %v", len(found), err)
+	}
+	if !strings.Contains(strings.Join(notes, "\n"), "另有 1 份文档") {
+		t.Fatalf("missing notice for the unsearched file: %v", notes)
+	}
+}
+
+func TestDocLibraryPreservesPreviousIndexWhenRebuildIsCanceled(t *testing.T) {
+	root, other, cache := t.TempDir(), t.TempDir(), t.TempDir()
+	writeFile(t, filepath.Join(root, "empty.txt"), "", "")
+	writeFile(t, filepath.Join(other, "other.txt"), "另一份政策。", "")
+	library := &docLibrary{}
+	if _, err := library.search(context.Background(), root, cache, "", 0, 0); err != nil {
+		t.Fatal(err)
+	}
+	canceled, cancel := context.WithCancel(context.Background())
+	cancel()
+	if _, err := library.search(canceled, other, cache, "", 0, 0); err != context.Canceled {
+		t.Fatalf("canceled rebuild returned %v", err)
+	}
+	found, err := library.search(context.Background(), root, cache, "", 0, 0)
+	if err != nil || strings.Join(found.Unreadable, ",") != "empty.txt" {
+		t.Fatalf("the retained index lost unreadable files: %v, %v", found.Unreadable, err)
+	}
+}
+
+func TestNumberedGlossaryKeepsTheDefinitionAndItsNumber(t *testing.T) {
+	const term = "节点边际电价"
+	for _, numbered := range []string{"7.节点边际电价：反映节点的边际供电成本。", "7．节点边际电价：反映节点的边际供电成本。"} {
+		t.Run(numbered, func(t *testing.T) {
+			if label := entryLabel(numbered); label != "第7项" || opensWithTerm(numbered, term) != 1 {
+				t.Fatalf("entry label %q or glossary definition did not match", label)
+			}
+		})
 	}
 }
 

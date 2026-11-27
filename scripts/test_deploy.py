@@ -5,12 +5,15 @@ and that --uninstall takes away what the deployment put and nothing else.
 """
 
 import contextlib
+import hashlib
 import importlib.util
 import io
 import json
 import tempfile
 import unittest
+import zipfile
 from pathlib import Path
+from unittest.mock import patch
 
 
 def load():
@@ -23,7 +26,9 @@ def load():
 class DeploymentTest(unittest.TestCase):
     def setUp(self):
         self.deploy = load()
-        self.home = Path(tempfile.mkdtemp())
+        temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(temporary.cleanup)
+        self.home = Path(temporary.name)
         self.said = io.StringIO()
 
     def framework_at(self, folder: Path, skills=("one",)) -> Path:
@@ -89,6 +94,106 @@ class DeploymentTest(unittest.TestCase):
         self.assertIn("AGENTS.md", claude)
         self.assertIn("tools/bailu/bailu.exe", claude)
 
+    def test_named_checkout_defaults_to_itself(self):
+        framework = self.framework_at(self.home / "bailu-power-trading")
+        self.assertEqual(self.deploy.default_project(), framework)
+        self.assertFalse((self.home / "AGENTS.md").exists())
+
+    def test_nested_legacy_install_still_defaults_to_the_recorded_parent(self):
+        project = self.home / "project"
+        self.framework_at(project / "bailu-power-trading")
+        self.deploy_into(project)
+        self.assertEqual(self.deploy.default_project(), project)
+
+    def test_redeploy_updates_unchanged_skill_but_keeps_edited_skill(self):
+        project = self.home / "project"
+        framework = self.framework_at(project / "bailu-power-trading", skills=("one", "two"))
+        self.deploy_into(project)
+        installed = project / ".agents" / "skills"
+        edited = installed / "two" / "local-notes.md"
+        edited.write_text("personal instructions", encoding="utf-8")
+        updated = framework / "skills" / "power-trading" / "one" / "SKILL.md"
+        updated.write_text("# new instructions", encoding="utf-8")
+        self.deploy_into(project)
+        self.assertEqual((installed / "one" / "SKILL.md").read_text(encoding="utf-8"), "# new instructions")
+        self.quietly(self.deploy.uninstall, project)
+        self.assertFalse((installed / "one").exists())
+        self.assertEqual(edited.read_text(encoding="utf-8"), "personal instructions")
+
+    def test_tool_installation_survives_no_tool_redeploy_and_uninstall_preserves_local_files(self):
+        project = self.home / "project"
+        framework = self.framework_at(project / "bailu-power-trading")
+        tool = framework / ".bailu" / "bin" / "bailu.exe"
+        tool.parent.mkdir(parents=True)
+        tool.write_bytes(b"tool")
+        local = framework / ".bailu" / "keep.md"
+        local.write_text("local", encoding="utf-8")
+        with patch.object(self.deploy, "install_tool", return_value=(tool, "test")), patch.object(self.deploy.subprocess, "run") as run:
+            run.return_value.returncode = 0
+            self.quietly(self.deploy.deploy, project, [], False, True, False)
+        record = self.deploy_into(project, with_skills=False)
+        self.assertEqual(record["tool"], tool.relative_to(project).as_posix())
+        self.quietly(self.deploy.uninstall, project)
+        self.assertFalse(tool.exists())
+        self.assertTrue(local.is_file())
+
+    def test_stale_tool_is_replaced_only_after_a_valid_mirror_supplies_its_successor(self):
+        framework = self.framework_at(self.home / "bailu-power-trading")
+        tool = framework / ".bailu" / "bin" / "bailu.exe"
+        tool.parent.mkdir(parents=True)
+        tool.write_bytes(b"old")
+        archive = io.BytesIO()
+        with zipfile.ZipFile(archive, "w") as zipped:
+            zipped.writestr("bailu.exe", b"updated")
+        archive_data = archive.getvalue()
+        name = "bailu-windows-amd64.zip"
+        sums = f"{hashlib.sha256(archive_data).hexdigest()}  {name}\n".encode()
+
+        def download(url, limit):
+            self.assertEqual(tool.read_bytes(), b"old")
+            if url.endswith("SHA256SUMS"):
+                return sums
+            return b"corrupt" if "gitee.com" in url else archive_data
+
+        def version(path):
+            return "bailu 0.0.0" if path == tool else f"bailu {self.deploy.VERSION}"
+
+        with patch.object(self.deploy.sys, "platform", "win32"), patch.object(
+            self.deploy, "system", return_value="windows-amd64"
+        ), patch.object(self.deploy, "fetch", side_effect=download), patch.object(self.deploy, "tool_version", side_effect=version):
+            placed, origin = self.quietly(self.deploy.install_tool, False)
+        self.assertEqual(placed, tool)
+        self.assertEqual(origin, "github.com")
+        self.assertEqual(tool.read_bytes(), b"updated")
+
+    def test_selfcheck_failure_does_not_install_skills_or_rules(self):
+        project = self.home / "project"
+        framework = self.framework_at(project / "bailu-power-trading")
+        tool = framework / ".bailu" / "bin" / "bailu.exe"
+        with patch.object(self.deploy, "install_tool", return_value=(tool, "test")), patch.object(self.deploy.subprocess, "run") as run:
+            run.return_value.returncode = 1
+            with self.assertRaises(SystemExit):
+                self.quietly(self.deploy.deploy, project, self.deploy.skill_dirs(project, []), True, True, False)
+        self.assertFalse((project / ".agents" / "skills" / "one").exists())
+        self.assertFalse((project / "AGENTS.md").exists())
+        self.assertFalse((project / self.deploy.MANIFEST).exists())
+
+    def test_uninstall_refuses_an_escaping_path_before_deleting_any_installation_files(self):
+        project = self.home / "project"
+        self.framework_at(project / "bailu-power-trading")
+        self.deploy_into(project)
+        manifest = project / self.deploy.MANIFEST
+        record = json.loads(manifest.read_text(encoding="utf-8"))
+        record["files"].append("../other.txt")
+        manifest.write_text(json.dumps(record), encoding="utf-8")
+        other = self.home / "other.txt"
+        other.write_text("keep", encoding="utf-8")
+        with self.assertRaises(SystemExit):
+            self.quietly(self.deploy.uninstall, project)
+        self.assertTrue(other.is_file())
+        self.assertTrue(manifest.is_file())
+        self.assertTrue((project / ".agents" / "skills" / "one" / "SKILL.md").is_file())
+
     def test_a_second_run_keeps_the_record_so_that_uninstall_removes_what_the_first_put(self):
         project = self.home / "project"
         project.mkdir()
@@ -125,14 +230,17 @@ class DeploymentTest(unittest.TestCase):
         self.framework_at(project / "bailu-power-trading")
         record = self.deploy_into(project, force=True)
         self.assertEqual((project / ".agents" / "skills" / "one" / "SKILL.md").exists(), True)
-        self.assertEqual((project / ".agents" / "skills" / "one.before-bailu" / "OWN.txt").read_text(encoding="utf-8"), "before\n")
-        self.assertEqual(record["backups"], {".agents/skills/one.before-bailu": ".agents/skills/one"})
+        backup, original = next(iter(record["backups"].items()))
+        self.assertEqual(original, ".agents/skills/one")
+        self.assertFalse((project / backup).is_relative_to(project / ".agents" / "skills"))
+        self.assertEqual((project / backup / "OWN.txt").read_text(encoding="utf-8"), "before\n")
         self.quietly(self.deploy.uninstall, project)
-        self.assertTrue((project / ".agents" / "skills" / "one.before-bailu" / "OWN.txt").exists(), "the backup outlives the uninstall")
+        self.assertTrue((project / backup / "OWN.txt").exists(), "the backup outlives the uninstall")
         self.assertIn("one.before-bailu", self.said.getvalue())
 
     def test_the_record_of_the_first_release_is_still_understood(self):
         project = self.home / "project"
+        self.framework_at(project / "bailu-power-trading")
         (project / ".agents" / "skills" / "one").mkdir(parents=True)
         (project / "AGENTS.md").write_text("written once\n", encoding="utf-8")
         (project / self.deploy.MANIFEST).write_text(json.dumps({"skills": ["one"], "skillsDirs": [".agents/skills"], "files": ["AGENTS.md"]}), encoding="utf-8")

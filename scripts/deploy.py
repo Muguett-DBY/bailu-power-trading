@@ -9,9 +9,9 @@ Usage, from the framework folder:
     python scripts/deploy.py [--project DIR] [--skills-dir DIR ...] [--no-skills] [--no-tool] [--force]
     python scripts/deploy.py --uninstall [--project DIR]
 
---project is the folder to work in. It is the folder holding the framework
-when that was cloned into a project as bailu-power-trading/, and the
-framework folder itself otherwise. --skills-dir is a folder the agent reads
+--project is the folder to work in. The framework folder itself is the default
+for a fresh installation. Name the project explicitly for a nested checkout.
+--skills-dir is a folder the agent reads
 the skills of a project from, inside the project; it may be given more than
 once. Without it the skills go to .agents/skills, and to the folder of each
 agent whose convention the project already uses. The tool is taken from a
@@ -21,18 +21,21 @@ SHA256SUMS — or built with Go when Go is there.
 
 import argparse
 import hashlib
+import http.client
 import io
 import json
 import os
+import platform
 import shutil
 import subprocess
 import sys
+import tempfile
 import urllib.request
 import zipfile
 from pathlib import Path
 
 FRAMEWORK = Path(__file__).resolve().parent.parent
-VERSION = "0.2.1"
+VERSION = "0.2.2"
 # Where the prebuilt tool is taken from, in the order that suits most: the
 # mirror in mainland China first, then GitHub, then a content delivery network.
 # {file} is the name of what is fetched: the archive, or SHA256SUMS beside it.
@@ -52,11 +55,9 @@ RULES = (("AGENTS.md", None), ("CLAUDE.md", "@AGENTS.md\n"), ("GEMINI.md", "@AGE
 
 def system() -> str:
     name = {"win32": "windows", "linux": "linux", "darwin": "darwin"}.get(sys.platform)
-    machine = os.environ.get("PROCESSOR_ARCHITECTURE", "") if sys.platform == "win32" else os.uname().machine
+    machine = platform.machine()
     arch = {"amd64": "amd64", "x86_64": "amd64", "arm64": "arm64", "aarch64": "arm64"}.get(machine.lower())
-    if not name or not arch:
-        raise SystemExit(f"没有为 {sys.platform} {machine} 预编译的 bailu。装有 Go 时可以自己编译，见 README。")
-    return f"{name}-{arch}"
+    return f"{name}-{arch}" if name and arch else ""
 
 
 def fetch(url: str, limit: int) -> bytes:
@@ -76,23 +77,22 @@ def listed_in(sums: str, name: str) -> str:
     return ""
 
 
-def install_tool(force: bool) -> tuple:
-    """Give the project a bailu it can run, and say where it came from: one
-    built in place, one put there by an earlier run, one downloaded from a
-    release, or one built with Go. A downloaded archive is used only when its
-    digest is the one the release's SHA256SUMS names, and when the tool says
-    the version the framework is at."""
-    exe = "bailu.exe" if sys.platform == "win32" else "bailu"
-    built = FRAMEWORK / "tools" / "bailu" / exe
-    if built.is_file():
-        return built, "本机构建"
-    placed = FRAMEWORK / ".bailu" / "bin" / exe
-    if placed.is_file() and not force:
-        return placed, "之前放入的"
-    placed.parent.mkdir(parents=True, exist_ok=True)
-    name = f"bailu-{system()}.zip"
+def tool_version(path: Path) -> str:
+    result = subprocess.run([str(path), "version"], capture_output=True, text=True, encoding="utf-8", errors="replace")
+    return result.stdout.strip() if result.returncode == 0 else ""
+
+
+def matches_version(path: Path) -> bool:
+    try:
+        return tool_version(path) == f"bailu {VERSION}"
+    except OSError:
+        return False
+
+
+def download_tool(name: str, exe: str, candidate: Path) -> str:
     for template in DOWNLOADS:
         base = template.format(version=VERSION, file="")
+        host = base.split("/")[2]
         try:
             archive = fetch(base + name, 50 * 1024 * 1024)
             expected = listed_in(fetch(base + "SHA256SUMS", 1024 * 1024).decode("utf-8"), name)
@@ -101,25 +101,60 @@ def install_tool(force: bool) -> tuple:
             if hashlib.sha256(archive).hexdigest() != expected:
                 raise ValueError("压缩包的 SHA-256 与 SHA256SUMS 不符")
             with zipfile.ZipFile(io.BytesIO(archive)) as zipped:
-                members = [member for member in zipped.namelist() if Path(member).name == exe]
-                if len(members) != 1:
-                    raise ValueError(f"压缩包里没有 {exe}")
-                with zipped.open(members[0]) as member, open(placed, "wb") as out:
+                members = [member for member in zipped.infolist() if not member.is_dir() and Path(member.filename).name == exe]
+                if len(members) != 1 or members[0].file_size > 50 * 1024 * 1024:
+                    raise ValueError(f"压缩包中 {exe} 的数量或大小异常")
+                with zipped.open(members[0]) as member, candidate.open("wb") as out:
                     shutil.copyfileobj(member, out)
-            placed.chmod(0o755)
-            said = subprocess.run([str(placed), "version"], capture_output=True, text=True, encoding="utf-8", errors="replace").stdout.strip()
+            candidate.chmod(0o755)
+            said = tool_version(candidate)
             if said != f"bailu {VERSION}":
-                placed.unlink()
                 raise ValueError(f"取到的工具自报「{said}」，不是 {VERSION}")
-            return placed, base.split("/")[2]
-        except Exception as error:
-            print(f"  没有从 {base.split('/')[2]} 取到（{error}）")
-    print("没有取到预编译的 bailu；改为用 Go 编译。")
-    go = shutil.which("go")
-    if not go:
-        raise SystemExit("没有取到预编译的 bailu，也没有找到 Go。请按 README 的地址手动下载，或换一台能访问 Gitee、GitHub 或 jsDelivr 的机器运行。")
-    subprocess.run([go, "build", "-o", str(placed), "."], cwd=FRAMEWORK / "tools" / "bailu", check=True)
-    return placed, "Go 编译"
+            return host
+        except (OSError, ValueError, http.client.HTTPException, zipfile.BadZipFile) as error:
+            print(f"  没有从 {host} 取到（{error}）")
+    return ""
+
+
+def install_tool(force: bool) -> tuple:
+    """Give the project a bailu it can run, and say where it came from: one
+    built in place, one put there by an earlier run, one downloaded from a
+    release, or one built with Go. A downloaded archive is used only when its
+    digest is the one the release's SHA256SUMS names, and when the tool says
+    the version the framework is at."""
+    exe = "bailu.exe" if sys.platform == "win32" else "bailu"
+    built = FRAMEWORK / "tools" / "bailu" / exe
+    if not force and built.is_file() and matches_version(built):
+        return built, "本机构建"
+    placed = inside(FRAMEWORK, FRAMEWORK / ".bailu" / "bin" / exe)
+    if placed.is_file() and not force and matches_version(placed):
+        return placed, "之前放入的"
+    placed.parent.mkdir(parents=True, exist_ok=True)
+    with tempfile.TemporaryDirectory(dir=placed.parent) as stage:
+        candidate = Path(stage) / exe
+        target = system()
+        origin = download_tool(f"bailu-{target}.zip", exe, candidate) if target else ""
+        if not origin:
+            print("没有取到预编译的 bailu；改为用 Go 编译。")
+            go = shutil.which("go")
+            if not go:
+                raise SystemExit("没有取到预编译的 bailu，也没有找到 Go。请按 README 的地址手动下载，或换一台能访问 Gitee、GitHub 或 jsDelivr 的机器运行。")
+            cache = inside(FRAMEWORK, FRAMEWORK / ".bailu" / "go-cache")
+            env = {**os.environ, "GOCACHE": str(cache / "build"), "GOMODCACHE": str(cache / "mod"),
+                   "GOPATH": str(cache), "GOTMPDIR": stage}
+            subprocess.run([go, "build", "-o", str(candidate), "."], cwd=FRAMEWORK / "tools" / "bailu", env=env, check=True)
+            if not matches_version(candidate):
+                raise SystemExit(f"编译得到的 bailu 版本与 {VERSION} 不符。")
+            origin = "Go 编译"
+        candidate.replace(placed)
+    return placed, origin
+
+
+def inside(project: Path, target: Path) -> Path:
+    resolved = target.resolve()
+    if resolved == project or not resolved.is_relative_to(project):
+        raise SystemExit(f"文件必须位于项目文件夹 {project} 内：{target}")
+    return target
 
 
 def skill_dirs(project: Path, given: list) -> list:
@@ -130,15 +165,16 @@ def skill_dirs(project: Path, given: list) -> list:
         for one in given:
             folder = Path(one) if Path(one).is_absolute() else project / one
             folder = folder.resolve()
-            if not folder.is_relative_to(project):
+            if folder == project or not folder.is_relative_to(project):
                 raise SystemExit(f"技能目录要放在项目文件夹里：{one} 不在 {project} 之下。")
-            folders.append(folder)
+            if folder not in folders:
+                folders.append(folder)
         return folders
     folders = [project / ".agents" / "skills"]
     for mark, folder in CONVENTIONS.items():
         if (project / mark).is_dir():
             folders.append(project / folder)
-    return folders
+    return [inside(project, folder) for folder in folders]
 
 
 def skills_of() -> list:
@@ -150,18 +186,20 @@ def skills_of() -> list:
     return found
 
 
-def put_aside(target: Path) -> Path:
+def put_aside(project: Path, target: Path) -> Path:
     """Rename a folder that is in the way, so that nothing of the project's is lost."""
-    backup = target.with_name(target.name + ".before-bailu")
+    folder = inside(project, FRAMEWORK / ".bailu" / "skill-backups" / target.parent.relative_to(project))
+    folder.mkdir(parents=True, exist_ok=True)
+    backup = folder / (target.name + ".before-bailu")
     count = 1
-    while backup.exists():
+    while backup.exists() or backup.is_symlink():
         count += 1
-        backup = target.with_name(f"{target.name}.before-bailu-{count}")
+        backup = folder / f"{target.name}.before-bailu-{count}"
     target.rename(backup)
     return backup
 
 
-def rules(project: Path, framework: str, tool: str) -> list:
+def rules(project: Path, framework: str, tool: str, hashes: dict | None = None) -> list:
     """Write what tells the agent of the framework where its rules and its tool
     are; a file of the project's own is left as it is."""
     own = framework == "."
@@ -175,20 +213,82 @@ def rules(project: Path, framework: str, tool: str) -> list:
     for name, head in RULES:
         if name == "GEMINI.md" and not (project / ".gemini").is_dir():
             continue
-        target = project / name
-        if target.exists():
-            if not own and "AGENTS.md" not in target.read_text(encoding="utf-8", errors="replace"):
-                advice = f"请在其中加一行，让 agent 先读 {where}"
-                advice += f"，并写明 bailu 工具的路径 `{tool}`。" if tool else "。"
-                print(f"{name} 已存在，没有改动它。{advice}")
+        target = inside(project, project / name)
+        if name == "AGENTS.md" and own:
             continue
         if name == "AGENTS.md" and not own:
             text = f"# 电力交易框架\n\n本项目装有 Bailu 电力交易框架。\n\n{pointer}"
         else:
             text = head + pointer
+        if target.exists():
+            current = target.read_bytes()
+            if current == text.encode():
+                continue
+            if not hashes or hashes.get(name) != hashlib.sha256(current).hexdigest():
+                existing = current.decode("utf-8", errors="replace")
+                follows_agents = name != "AGENTS.md" and "@AGENTS.md" in existing
+                if not own and where not in existing and not follows_agents:
+                    advice = f"请在其中加一行，让 agent 先读 {where}"
+                    advice += f"，并写明 bailu 工具的路径 `{tool}`。" if tool else "。"
+                    print(f"{name} 已存在，没有改动它。{advice}")
+                continue
         target.write_text(text, encoding="utf-8", newline="\n")
         written.append(name)
     return written
+
+
+def installed_skills(record: dict) -> dict:
+    skills = record.get("skills", {})
+    if isinstance(skills, list):  # the record of the first release
+        return {folder: skills for folder in record.get("skillsDirs", [])}
+    return skills
+
+
+def copy_skills(project: Path, folders: list, manifest: dict, force: bool) -> None:
+    sources = [(skill, tree_digest(skill)) for skill in skills_of()]
+    for folder in folders:
+        folder.mkdir(parents=True, exist_ok=True)
+        named = folder.relative_to(project).as_posix()
+        installed = manifest["skills"].get(named, [])
+        for skill, digest in sources:
+            target = inside(project, folder / skill.name)
+            relative = target.relative_to(project).as_posix()
+            occupied = target.exists() or target.is_symlink()
+            owned = False
+            if occupied:
+                found = tree_digest(target) if target.is_dir() and not target.is_symlink() else None
+                previous = manifest["skillHashes"].get(relative, digest)
+                owned = skill.name in installed and found is not None and found == previous
+                if owned and found == digest:
+                    manifest["skillHashes"][relative] = digest
+                    continue
+                if not owned and not force:
+                    print(f"技能 {skill.name} 在 {named} 已存在，没有覆盖。")
+                    continue
+            with tempfile.TemporaryDirectory(dir=folder) as stage:
+                replacement = Path(stage) / "replacement"
+                shutil.copytree(skill, replacement)
+                previous = None
+                if occupied:
+                    if owned:
+                        previous = target.rename(Path(stage) / "previous")
+                    else:
+                        previous = put_aside(project, target)
+                try:
+                    replacement.rename(target)
+                except OSError:
+                    if previous:
+                        previous.rename(target)
+                    raise
+                if occupied and not owned:
+                    backup = previous.relative_to(project).as_posix()
+                    manifest["backups"][backup] = relative
+                    print(f"{relative} 原有的内容已移到 {backup}。")
+            if skill.name not in installed:
+                installed.append(skill.name)
+            manifest["skillHashes"][relative] = digest
+        if installed:
+            manifest["skills"][named] = installed
 
 
 def deploy(project: Path, skills: list, with_skills: bool, with_tool: bool, force: bool) -> None:
@@ -197,18 +297,12 @@ def deploy(project: Path, skills: list, with_skills: bool, with_tool: bool, forc
     if not FRAMEWORK.is_relative_to(project):
         raise SystemExit(f"框架不在要工作的项目文件夹里（{project}）。请先把框架克隆或复制到项目里，再在框架目录中运行本脚本。")
     framework = "." if FRAMEWORK == project else FRAMEWORK.relative_to(project).as_posix()
-    record = project / MANIFEST
+    record = inside(project, project / MANIFEST)
     # What an earlier run put there is kept track of: a skill left alone now is
     # still removed by --uninstall.
-    earlier = {}
-    if record.is_file():
-        try:
-            earlier = json.loads(record.read_text(encoding="utf-8"))
-        except ValueError:
-            earlier = {}
-    was = earlier.get("skills")
-    if isinstance(was, list):  # the record of the first release
-        was = {folder: was for folder in earlier.get("skillsDirs", [])}
+    earlier = json.loads(record.read_text(encoding="utf-8")) if record.is_file() else {}
+    if earlier.get("framework", framework) != framework:
+        raise SystemExit("部署记录指向另一份框架。请先从原框架目录卸载。")
     if not earlier and framework != ".":
         # The framework was cloned into a folder that is somebody's already: say what will be written there.
         others = [entry.name for entry in project.iterdir() if entry.name not in (FRAMEWORK.name, MANIFEST)]
@@ -216,46 +310,31 @@ def deploy(project: Path, skills: list, with_skills: bool, with_tool: bool, forc
             written = [folder.relative_to(project).as_posix() for folder in skills] + [name for name, _ in RULES if not (project / name).exists()]
             written += [framework + "/.bailu", MANIFEST]
             print(f"注意：{project} 里已经有 {len(others)} 项别的东西，不会改动它们。部署只写入：" + "、".join(written))
-    manifest = {"framework": framework, "skills": was or {}, "backups": earlier.get("backups", {}), "files": []}
-    if with_skills:
-        for folder in skills:
-            folder.mkdir(parents=True, exist_ok=True)
-            named = folder.relative_to(project).as_posix()
-            copied = []
-            for skill in skills_of():
-                target = folder / skill.name
-                if target.exists():
-                    if not force:
-                        if skill.name not in manifest["skills"].get(named, []):
-                            print(f"技能 {skill.name} 在 {named} 已存在，没有覆盖。")
-                        else:
-                            copied.append(skill.name)  # left as the earlier run put it
-                        continue
-                    backup = put_aside(target)
-                    manifest["backups"][backup.relative_to(project).as_posix()] = target.relative_to(project).as_posix()
-                    print(f"{named}/{skill.name} 原有的内容已改名为 {backup.name}，要恢复就改回去。")
-                shutil.copytree(skill, target)
-                copied.append(skill.name)
-            if copied:
-                manifest["skills"][named] = copied
-    tool = None
+    manifest = {"framework": framework, "skills": installed_skills(earlier), "skillHashes": earlier.get("skillHashes", {}),
+                "backups": earlier.get("backups", {})}
     if with_tool:
         tool, origin = install_tool(force)
+        print("自检：")
+        if subprocess.run([str(tool), "selfcheck", "--home", str(FRAMEWORK)]).returncode != 0:
+            raise SystemExit("自检没有通过，技能与部署记录尚未写入。")
         manifest["tool"] = tool.relative_to(project).as_posix()
         manifest["toolOrigin"] = origin
-    written = rules(project, framework, manifest.get("tool", ""))
+    elif earlier.get("tool") and inside(project, project / earlier["tool"]).is_file():
+        manifest["tool"] = earlier["tool"]
+        manifest["toolOrigin"] = earlier.get("toolOrigin", "之前放入的")
+    if with_skills:
+        copy_skills(project, skills, manifest, force)
+    written = rules(project, framework, manifest.get("tool", ""), earlier.get("hashes", {}))
     # A rule file an earlier run wrote and this one left in place is still the deployment's.
     manifest["files"] = written + [name for name in earlier.get("files", []) if name not in written and (project / name).is_file()]
     # What each rule file held when it was written: one changed since is the user's by then.
     manifest["hashes"] = {name: digest for name, digest in earlier.get("hashes", {}).items() if name in manifest["files"]}
     for name in written:
         manifest["hashes"][name] = digest_of(project / name)
-    record.write_text(json.dumps(manifest, ensure_ascii=False, indent=2) + "\n", encoding="utf-8", newline="\n")
-    if tool:
-        print("自检：")
-        if subprocess.run([str(tool), "selfcheck", "--home", str(FRAMEWORK)]).returncode != 0:
-            print("自检没有通过，部署没有完成。把上面的输出发给维护者；或删掉框架里的 .bailu 文件夹后加 --force 重试。")
-            sys.exit(1)
+    with tempfile.TemporaryDirectory(dir=project) as stage:
+        pending = Path(stage) / MANIFEST
+        pending.write_text(json.dumps(manifest, ensure_ascii=False, indent=2) + "\n", encoding="utf-8", newline="\n")
+        pending.replace(record)
     print("部署完成。以下都在项目文件夹内，没有安装任何全局的东西：")
     print(f"  框架：{framework}")
     count = sum(len(names) for names in manifest["skills"].values())
@@ -263,42 +342,90 @@ def deploy(project: Path, skills: list, with_skills: bool, with_tool: bool, forc
         print(f"  技能：{count} 个 → " + "、".join(manifest["skills"]))
     else:
         print("  技能：没有复制（--no-skills）" if not with_skills else "  技能：项目里都已有了，这次没有新复制")
-    print(f"  工具：{manifest.get('tool', '未安装（--no-tool）')}" + (f"（{manifest['toolOrigin']}）" if tool else ""))
+    print(f"  工具：{manifest.get('tool', '未安装（--no-tool）')}" + (f"（{manifest['toolOrigin']}）" if "tool" in manifest else ""))
     for name in manifest["files"]:
         print(f"  规则：{name}")
-    print(f"卸载：\"{sys.executable}\" scripts/deploy.py --uninstall（框架文件夹本身保留，可自行删除）")
+    print(f"卸载：\"{sys.executable}\" scripts/deploy.py --uninstall --project \"{project}\"（框架文件夹本身保留）")
 
 
 def uninstall(project: Path) -> None:
-    path = project / MANIFEST
+    if not FRAMEWORK.is_relative_to(project):
+        raise SystemExit("框架目录不在该项目内。")
+    path = inside(project, project / MANIFEST)
     if not path.is_file():
         raise SystemExit(f"{project} 里没有部署记录（{MANIFEST}）。")
     manifest = json.loads(path.read_text(encoding="utf-8"))
-    skills = manifest.get("skills", [])
-    if isinstance(skills, list):  # the record of the first release
-        skills = {folder: skills for folder in manifest.get("skillsDirs", [])}
-    for folder, names in skills.items():
+    framework = FRAMEWORK.relative_to(project).as_posix()
+    if manifest.get("framework", framework) != framework:
+        raise SystemExit("部署记录指向另一份框架。请从原框架目录卸载。")
+    skills = []
+    for folder, names in installed_skills(manifest).items():
+        skill_dir = inside(project, project / folder)
         for name in names:
-            shutil.rmtree(project / folder / name, ignore_errors=True)
-    hashes = manifest.get("hashes", {})
+            if not name or Path(name).name != name or name in (".", ".."):
+                raise SystemExit(f"部署记录中的技能名称无效：{name}")
+            skills.append(inside(project, skill_dir / name))
+    rule_names = manifest.get("files", [])
+    if set(rule_names).difference(name for name, _ in RULES):
+        raise SystemExit("部署记录包含未知的规则文件。")
+    rules = [inside(project, project / name) for name in rule_names]
+    installed_tool = inside(project, project / manifest["tool"]) if manifest.get("tool") else None
+    tool_dir = FRAMEWORK / ".bailu" / "bin"
+    skill_hashes = manifest.get("skillHashes", {})
     changed = []
-    for name in manifest.get("files", []):
-        target = project / name
-        if name in hashes and target.is_file() and digest_of(target) != hashes[name]:
+    for target in skills:
+        relative = target.relative_to(project).as_posix()
+        if target.is_symlink() or (target.is_dir() and relative in skill_hashes and tree_digest(target) != skill_hashes[relative]):
+            changed.append(relative)
+        elif target.is_dir():
+            shutil.rmtree(target)
+    hashes = manifest.get("hashes", {})
+    for target in rules:
+        name = target.relative_to(project).as_posix()
+        if target.is_symlink() or (name in hashes and target.is_file() and digest_of(target) != hashes[name]):
             changed.append(name)
             continue
         target.unlink(missing_ok=True)
-    shutil.rmtree(FRAMEWORK / ".bailu", ignore_errors=True)
+    if installed_tool and installed_tool.parent == tool_dir and installed_tool.name in ("bailu", "bailu.exe"):
+        installed_tool.unlink(missing_ok=True)
     path.unlink()
-    print("已移除部署时放入的技能、规则文件和工具；框架文件夹本身保留。")
+    print("已清理部署记录及其管理的技能、规则文件和缓存工具。")
     if changed:
-        print("这些规则文件在部署之后被改动过，是项目自己的了，没有删除：" + "、".join(changed))
+        print("这些技能或规则文件在部署后被改动过，已保留：" + "、".join(changed))
     if manifest.get("backups"):
-        print("部署时改名保留的原有技能还在：" + "、".join(Path(one).name for one in manifest["backups"]))
+        print("部署时改名保留的原有技能还在：" + "、".join(manifest["backups"]))
 
 
 def digest_of(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def tree_digest(folder: Path) -> str:
+    digest = hashlib.sha256()
+    for path in sorted(folder.rglob("*")):
+        digest.update(path.relative_to(folder).as_posix().encode() + b"\x00")
+        if path.is_symlink():
+            digest.update(b"L" + os.fsencode(os.readlink(path)) + b"\x00")
+        elif path.is_file():
+            digest.update(b"F" + bytes.fromhex(digest_of(path)))
+        else:
+            digest.update(b"D")
+    return digest.hexdigest()
+
+
+def default_project() -> Path:
+    # Recognise a previous nested deployment without inferring a project from the clone name.
+    if not (FRAMEWORK / MANIFEST).is_file():
+        parent = FRAMEWORK.parent
+        record = parent / MANIFEST
+        if record.is_file() and parent != Path.home().resolve():
+            try:
+                registration = json.loads(record.read_text(encoding="utf-8"))
+            except json.JSONDecodeError:
+                return FRAMEWORK
+            if isinstance(registration, dict) and registration.get("framework") == FRAMEWORK.name:
+                return parent
+    return FRAMEWORK
 
 
 def main() -> None:
@@ -313,18 +440,10 @@ def main() -> None:
     parser.add_argument("--force", action="store_true", help="用框架的技能和工具覆盖已有的同名文件夹（原有的改名保留为 *.before-bailu）")
     parser.add_argument("--uninstall", action="store_true", help="移除部署时放入的东西")
     options = parser.parse_args()
-    default = FRAMEWORK.parent if FRAMEWORK.name == "bailu-power-trading" else FRAMEWORK
-    if options.project:
-        project = Path(options.project).resolve()
-    elif default == FRAMEWORK:
-        project = default
-    else:
-        project = default
-        # Rules written into a home folder would reach every project on the machine.
-        home = Path.home().resolve()
-        if not (project / MANIFEST).is_file() and (project == home or project in home.parents):
-            raise SystemExit(f"框架所在的上级文件夹是用户目录（{project}），规则文件不能写在这里。请用 --project 指明要部署到哪个项目文件夹。")
-    project.mkdir(parents=True, exist_ok=True)
+    project = Path(options.project).resolve() if options.project else default_project()
+    home = Path.home().resolve()
+    if project == home or project in home.parents:
+        raise SystemExit(f"请选择单独的项目目录，部署不会写入用户目录或其上层：{project}")
     if options.uninstall:
         uninstall(project)
         return

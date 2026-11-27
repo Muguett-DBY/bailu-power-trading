@@ -51,9 +51,10 @@ func average(energy, cost decimal.Decimal) string {
 type reviewResult struct {
 	From, To string
 	Days     []dayReview
-	// The totals over the days that have a real-time price.
-	Metered, Contract, Ahead, Deviation             decimal.Decimal
-	ContractCost, AheadCost, Cost, SpotCost, Saving decimal.Decimal
+	// Positions cover every metered day. Cost comparisons cover priced days.
+	Metered, Contract, Ahead, Deviation   decimal.Decimal
+	ContractCost, AheadCost               decimal.Decimal
+	PricedMetered, Cost, SpotCost, Saving decimal.Decimal
 	// ContractGain and AheadGain are what each part saved against the real-time price.
 	ContractGain, AheadGain decimal.Decimal
 	Priced                  int
@@ -169,6 +170,7 @@ func reviewLedger(trades, declarations, metered []ledgerEntry, from, to string, 
 			continue
 		}
 		r.Priced++
+		r.PricedMetered = r.PricedMetered.Add(one.Metered)
 		r.Cost, r.SpotCost = r.Cost.Add(one.cost()), r.SpotCost.Add(one.spotCost())
 		// What each part saved against the real-time price: its energy at that price less what it cost.
 		r.ContractGain = r.ContractGain.Add(one.Contract.Mul(*one.RealTime).Sub(one.ContractCost))
@@ -212,7 +214,7 @@ func reviewMarkdown(r reviewResult) string {
 	spotAverage, cost, spot, saving := "—", "—", "—", "—"
 	attribution := "归因：没有实时价，电费、节省和归因都没有算；用 spot=实时价 给出，或在计量记录里写 rt。"
 	if r.Priced > 0 {
-		spotAverage, cost, spot, saving = r.SpotCost.Div(r.Metered).StringFixed(2), formatMoney(r.Cost), formatMoney(r.SpotCost),
+		spotAverage, cost, spot, saving = average(r.PricedMetered, r.SpotCost), formatMoney(r.Cost), formatMoney(r.SpotCost),
 			signed(r.Saving, formatMoney)
 		attribution = fmt.Sprintf("归因：比全部按实时价结算%s %s，其中中长期合约%s %s，日前申报%s %s。", saved(r.Saving),
 			formatMoney(r.Saving.Abs()), saved(r.ContractGain), formatMoney(r.ContractGain.Abs()), saved(r.AheadGain), formatMoney(r.AheadGain.Abs()))
@@ -230,7 +232,7 @@ func reviewMarkdown(r reviewResult) string {
 	fmt.Fprintln(&out, attribution)
 	var notes []string
 	if r.Priced < len(r.Days) {
-		notes = append(notes, fmt.Sprintf("有 %d 天没有实时价（计量记录里没写 rt，也没给 spot=），这些天的电费与节省没有算。", len(r.Days)-r.Priced))
+		notes = append(notes, fmt.Sprintf("有 %d 天没有实时价（计量记录里没写 rt，也没给 spot=），这些天未计入合计实时均价、电费与节省。", len(r.Days)-r.Priced))
 	}
 	if len(r.LeftOut) > 0 {
 		notes = append(notes, fmt.Sprintf("有 %d 条申报没有计入日前申报（市场不是日前，或没有电量、价格）。", len(r.LeftOut)))

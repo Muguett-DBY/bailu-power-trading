@@ -278,6 +278,9 @@ func (f *powerFlow) documents(ctx context.Context, t powerTurn, query string) ([
 		if len(found.Hits) == 0 {
 			notes = append(notes, fmt.Sprintf("项目文件夹里的 %d 份文件中没有找到相关条款", found.Files))
 		}
+		if found.Omitted > 0 {
+			notes = append(notes, fmt.Sprintf("另有 %d 份文档超过检索数量或单文件大小上限，请缩小范围后查询。", found.Omitted))
+		}
 		if len(found.Unreadable) > 0 {
 			notes = append(notes, fmt.Sprintf("有 %d 份文件无法读取（可能是扫描件）：%s", len(found.Unreadable), strings.Join(found.Unreadable, "、")))
 		}

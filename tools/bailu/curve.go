@@ -186,7 +186,7 @@ func curveCommand(o options, out io.Writer) error {
 	var text string
 	switch {
 	case price >= 0 && quantity >= 0 && !timed:
-		text, err = bidCurveMarkdown(file, scan, limits, price, quantity)
+		text, err = bidCurveMarkdown(file, scan, table, limits, price, quantity)
 	case limits.Capacity != nil || limits.Power != nil || storageNamed(table.Headers):
 		text, err = storageCurveMarkdown(file, scan, table, limits, quantity)
 	default:
@@ -262,14 +262,12 @@ func timeCurveMarkdown(file string, scan tableScan, table gridTable, limits curv
 	if len(raw) == 0 {
 		return "", errors.New("这一列读不出任何一个数值")
 	}
-	scale, energy := decimal.NewFromInt(1), false
-	if name := normalizeHeader(table.Headers[scan.Values[k]]); scan.Interval > 0 && containsAny(name, "电量", "兆瓦时", "mwh", "千瓦时", "kwh") {
-		energy = true
-		if containsAny(name, "千瓦时", "kwh") {
-			scale = decimal.New(1, -3)
-		}
-		scale = scale.Mul(decimal.NewFromInt(60)).Div(decimal.NewFromInt(int64(scan.Interval)))
+	header := normalizeHeader(table.Headers[scan.Values[k]])
+	energy := energyColumn(header)
+	if energy && scan.Interval == 0 {
+		return "", errors.New("电量曲线需要有时间间隔才能换算成功率")
 	}
+	scale := curvePowerScale(header, scan.Interval)
 	values := make([]locatedValue, len(raw))
 	for i, one := range raw {
 		values[i] = locatedValue{one.value.Mul(scale), one.at, one.row}
@@ -296,6 +294,22 @@ func timeCurveMarkdown(file string, scan tableScan, table gridTable, limits curv
 		notes = append(notes, fmt.Sprintf("电量合计 %s 兆瓦时。", formatMwh(total.Mul(decimal.NewFromInt(int64(scan.Interval))).Div(decimal.NewFromInt(60)))))
 	}
 	return curveMarkdown(file, kind, checks, notes...), nil
+}
+
+func energyColumn(header string) bool {
+	return containsAny(header, "电量", "energy", "兆瓦时", "mwh", "千瓦时", "kwh")
+}
+
+// curvePowerScale converts the column's declared unit to MW.
+func curvePowerScale(header string, interval int) decimal.Decimal {
+	scale := one
+	if containsAny(header, "千瓦", "kw") {
+		scale = decimal.New(1, -3)
+	}
+	if energyColumn(header) {
+		scale = scale.Mul(decimal.NewFromInt(60)).Div(decimal.NewFromInt(int64(interval)))
+	}
+	return scale
 }
 
 func lower(a, b locatedValue) locatedValue {
@@ -412,13 +426,20 @@ func stepCheck(values []locatedValue, step *decimal.Decimal, unit string) curveC
 // bidCurveMarkdown checks a bid: the quantity at each price. A buyer's quantity
 // is what it buys at that price and so may only fall as the price rises; a
 // seller's is what it offers at that price and so may not be negative.
-func bidCurveMarkdown(file string, scan tableScan, limits curveLimits, price, quantity int) (string, error) {
+func bidCurveMarkdown(file string, scan tableScan, table gridTable, limits curveLimits, price, quantity int) (string, error) {
 	type segment struct {
 		at            string
 		price, volume decimal.Decimal
 	}
 	var segments []segment
 	var unreadable []string
+	priceScale, volumeScale := one, one
+	if containsAny(normalizeHeader(table.Headers[scan.Values[price]]), "千瓦时", "kwh", "元/度") {
+		priceScale = thousand
+	}
+	if containsAny(normalizeHeader(table.Headers[scan.Values[quantity]]), "千瓦时", "kwh") {
+		volumeScale = decimal.New(1, -3)
+	}
 	for i := range scan.Marks {
 		p, v := scan.Cells[price][i], scan.Cells[quantity][i]
 		switch {
@@ -426,7 +447,7 @@ func bidCurveMarkdown(file string, scan tableScan, limits curveLimits, price, qu
 		case p.value == nil || v.value == nil:
 			unreadable = append(unreadable, scan.position(i))
 		default:
-			segments = append(segments, segment{scan.position(i), *p.value, *v.value})
+			segments = append(segments, segment{scan.position(i), p.value.Mul(priceScale), v.value.Mul(volumeScale)})
 		}
 	}
 	if len(segments) == 0 {
@@ -528,7 +549,8 @@ func storageCurveMarkdown(file string, scan tableScan, table gridTable, limits c
 			continue
 		}
 		header := normalizeHeader(table.Headers[col])
-		incoming, outgoing := containsAny(header, "充电", "charge"), containsAny(header, "放电", "discharge")
+		incoming := containsAny(strings.ReplaceAll(header, "discharge", ""), "充电", "charge")
+		outgoing := containsAny(header, "放电", "discharge")
 		switch {
 		case incoming && outgoing && signed < 0:
 			signed = k
@@ -543,6 +565,12 @@ func storageCurveMarkdown(file string, scan tableScan, table gridTable, limits c
 			return "", errors.New("没有找到充放电功率列")
 		}
 		signed = quantity
+	}
+	scales := make(map[int]decimal.Decimal, 3)
+	for _, column := range []int{signed, charge, discharge} {
+		if column >= 0 {
+			scales[column] = curvePowerScale(normalizeHeader(table.Headers[scan.Values[column]]), scan.Interval)
+		}
 	}
 	type point struct {
 		at                         string
@@ -562,7 +590,10 @@ func storageCurveMarkdown(file string, scan tableScan, table gridTable, limits c
 				return decimal.Zero, true
 			}
 			cell := scan.Cells[k][i]
-			return *cell.value, cell.value != nil
+			if cell.value == nil {
+				return decimal.Zero, false
+			}
+			return cell.value.Mul(scales[k]), true
 		}
 		// In one column charging is positive and discharging negative.
 		var chargeNow, dischargeNow decimal.Decimal
@@ -635,6 +666,10 @@ func storageCurveMarkdown(file string, scan tableScan, table gridTable, limits c
 	if limits.Capacity == nil {
 		soc.Skipped, soc.Detail = true, "没有给 --capacity"
 		return curveMarkdown(file, kind, append(checks, soc), summary), nil
+	}
+	if len(lacking) != 0 {
+		soc.Skipped, soc.Detail = true, "有时段的功率读不出来，无法校验全程 SOC"
+		return curveMarkdown(file, kind, append(checks, soc), "已读时段："+summary), nil
 	}
 	low, high := decimal.Zero, hundred
 	if limits.SocMin != nil {

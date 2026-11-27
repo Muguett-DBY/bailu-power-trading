@@ -11,10 +11,12 @@ It is taken out of Bailu.SI, a desktop assistant for electricity trading, which 
 Open a folder in any agent that can run commands and read and write files — Codex, Claude Code, WorkBuddy, Cursor, pi and others — and send it this, as it is:
 
 ```text
-Set this folder up as my electricity-trading workspace: clone the framework from Gitee (https://gitee.com/Muguett/bailu-power-trading.git , or from GitHub at https://github.com/Muguett-DBY/bailu-power-trading.git if that fails; clone with GIT_TERMINAL_PROMPT=0 and GCM_INTERACTIVE=never set, and treat a request to sign in as a failure) into this folder (into the folder itself if it is empty, otherwise into ./bailu-power-trading/), read its AGENTS.md in full, then run python scripts/deploy.py inside the framework folder to deploy it; keep everything inside this folder, install nothing globally and change no file outside it; when the deployment is done tell me what it did, and if any step fails show me the error as it is instead of skipping it.
+Set this folder up as my electricity-trading workspace. Record its absolute path and clone the public repository from https://gitee.com/Muguett/bailu-power-trading.git or, if it fails, https://github.com/Muguett-DBY/bailu-power-trading.git with Git sign-in prompts disabled (GIT_TERMINAL_PROMPT=0 and GCM_INTERACTIVE=never). Clone into this folder if empty, or into a bailu-power-trading subfolder otherwise. Read AGENTS.md in the repository, then use an available Python 3.10+ launcher (python3, python, or py -3 on Windows) to run scripts/deploy.py --project "<original folder's absolute path>" from the repository. Run bailu selfcheck and bailu policy search --province 天津 --limit 1 using the tool path in .bailu-install.json at the project root. Report the tool path and how to get started. Keep everything in the original folder and report any actual error.
 ```
 
 When it is done the agent tells you the deployment is complete and where the `bailu` tool is. From then on, every new session in this folder finds the rules in the project's `AGENTS.md`.
+
+Both public mirrors include the handbook, 151 independently sourced official documents, and the early ECNote snapshot of 2,180 records. Run `bailu docs "<question>"` to search the official library or `bailu policy search --province 天津` to find material in the snapshot. A snapshot date or status is a catalog label. Check the original issuer's text when determining which version applies. See [snapshot provenance](knowledge/ecnote/README.md).
 
 You need Python 3.10 or newer (the deployment uses the standard library only). `bailu` comes prebuilt for Windows, Linux and macOS, taken from Gitee, GitHub or jsDelivr and checked against SHA256SUMS; Go is not required.
 
@@ -24,7 +26,7 @@ The deployment is **self-contained**: everything stays in the folder. No global 
 | --- | --- | --- |
 | Skills | `.agents/skills/` (or your agent's own skills folder) | 29 skills the agent loads as the task needs |
 | Rules | `AGENTS.md` at the project root (`CLAUDE.md` points to it for Claude Code) | Tells the agent to read the framework's rules and where `bailu` is |
-| Framework | `bailu-power-trading/` | Knowledge base, document library, tool, scripts |
+| Framework | Project root or `bailu-power-trading/` | Handbook, official documents, ECNote snapshot, tool, scripts |
 | Record | `.bailu-install.json` | What was added, for uninstalling |
 
 Uninstall: run `python scripts/deploy.py --uninstall` in the framework folder. It removes the skills, the rule files and the tool it added; the framework folder itself stays, delete it if you like.

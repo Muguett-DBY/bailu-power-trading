@@ -1,4 +1,4 @@
-"""Publish a release of the framework: tests, five builds, GitHub, jsDelivr and Gitee.
+"""Publish a release of the framework: tests, native archives, GitHub, jsDelivr and Gitee.
 
     python scripts/publish.py v0.2.1
 
@@ -14,6 +14,7 @@ before it runs it, and the notices of the Go modules built into the tool.
 import hashlib
 import json
 import os
+import re
 import subprocess
 import sys
 import urllib.error
@@ -24,8 +25,9 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 TOOL = ROOT / "tools" / "bailu"
 OUT = ROOT / ".release"
-TARGETS = ["windows/amd64", "linux/amd64", "linux/arm64", "darwin/amd64", "darwin/arm64"]
+TARGETS = ["windows/amd64", "windows/arm64", "linux/amd64", "linux/arm64", "darwin/amd64", "darwin/arm64"]
 GITHUB = "https://github.com/Muguett-DBY/bailu-power-trading"
+GITHUB_REPO = "Muguett-DBY/bailu-power-trading"
 GITEE = "https://gitee.com/Muguett/bailu-power-trading"
 GITEE_API = "https://gitee.com/api/v5/repos/Muguett/bailu-power-trading"
 
@@ -51,7 +53,7 @@ def module_notices() -> Path:
     text = ["Notices of the Go modules built into bailu", ""]
     for line in run("go", "list", "-m", "-f", "{{.Path}}\t{{.Dir}}\t{{.Version}}", "all", cwd=TOOL).splitlines():
         module, folder, release = line.split("\t")
-        if not folder:  # the tool itself
+        if not folder or not release:  # the tool itself has no module version
             continue
         files = sorted(path for path in Path(folder).iterdir()
                        if path.is_file() and path.name.upper().startswith(("LICENSE", "LICENCE", "COPYING", "NOTICE", "PATENTS")))
@@ -79,8 +81,11 @@ def build(version: str) -> list:
         run("go", "build", "-trimpath", "-ldflags=-s -w", "-o", str(folder / exe), ".", cwd=TOOL,
             env={"GOOS": system, "GOARCH": arch, "CGO_ENABLED": "0", "GOFLAGS": "-p=4"})
         archive = OUT / (name + ".zip")
-        with zipfile.ZipFile(archive, "w", zipfile.ZIP_DEFLATED) as zipped:
-            zipped.write(folder / exe, exe)
+        with zipfile.ZipFile(archive, "w") as zipped:
+            member = zipfile.ZipInfo(exe)
+            member.create_system = 3
+            member.external_attr = 0o100755 << 16
+            zipped.writestr(member, (folder / exe).read_bytes(), compress_type=zipfile.ZIP_DEFLATED)
         archives.append(archive)
         print("built", archive.name)
     (OUT / "SHA256SUMS").write_text(
@@ -98,17 +103,40 @@ def build(version: str) -> list:
 
 
 def assets() -> list:
-    return [path for path in sorted(OUT.iterdir())
-            if path.suffix == ".zip" or path.name in ("SHA256SUMS", "THIRD-PARTY-NOTICES.txt")]
+    archives = [OUT / f"bailu-{target.replace('/', '-')}.zip" for target in TARGETS]
+    return [*archives, OUT / "SHA256SUMS", OUT / "THIRD-PARTY-NOTICES.txt"]
+
+
+def ensure_tag(version: str) -> str:
+    commit = run("git", "rev-parse", "HEAD")
+    tagged = run("git", "rev-parse", "--verify", "--quiet", f"refs/tags/{version}^{{commit}}", check=False)
+    if tagged and tagged != commit:
+        raise SystemExit(f"{version} already names a different commit: {tagged}")
+    if not tagged:
+        run("git", "tag", version, commit)
+    return commit
 
 
 def github(version: str) -> None:
     # A release that is there already is left as it is: a run that broke off is
     # finished by running it again.
-    if subprocess.run(["gh", "release", "view", version], cwd=ROOT, capture_output=True).returncode == 0:
+    flags = ["--repo", GITHUB_REPO]
+    result = subprocess.run(["gh", "release", "view", version, *flags, "--json", "isDraft,assets"], cwd=ROOT, capture_output=True)
+    if result.returncode == 0:
+        release = json.loads(result.stdout)
+        attached = {asset["name"]: asset for asset in release["assets"]}
+        for path in assets():
+            previous = attached.get(path.name)
+            if previous and previous.get("digest") and previous["digest"] != "sha256:" + hashlib.sha256(path.read_bytes()).hexdigest():
+                raise SystemExit(f"GitHub release {version} already contains a different {path.name}")
+        missing = [str(path) for path in assets() if path.name not in attached]
+        if missing:
+            run("gh", "release", "upload", version, *missing, *flags)
+        if release["isDraft"]:
+            run("gh", "release", "edit", version, "--draft=false", *flags)
         return
     run("gh", "release", "create", version, *[str(path) for path in assets()], "--title", f"bailu {version}",
-        "--notes-file", str(OUT / "notes.md"))
+        "--notes-file", str(OUT / "notes.md"), "--verify-tag", *flags)
 
 
 def delivery_network(version: str) -> None:
@@ -123,13 +151,19 @@ def delivery_network(version: str) -> None:
     for path in assets():
         (staging / path.name).write_bytes(path.read_bytes())
     (staging / "VERSION.txt").write_text(version + "\n", encoding="utf-8", newline="\n")
-    own = {"GIT_INDEX_FILE": str(OUT / "dist-index")}
+    index = OUT / "dist-index"
+    own = {"GIT_INDEX_FILE": str(index)}
     run("git", "read-tree", "--empty", env=own)
     run("git", "--work-tree", str(staging), "add", "-f", "-A", ".", cwd=staging, env=own)
     tree = run("git", "write-tree", env=own)
-    commit = run("git", "commit-tree", tree, "-m", f"bailu {version}")
-    run("git", "push", "--force", "origin", f"{commit}:refs/heads/dist")
-    (OUT / "dist-index").unlink(missing_ok=True)
+    index.unlink(missing_ok=True)
+    upstream = run("git", "ls-remote", GITHUB, "refs/heads/dist")
+    parent = []
+    if upstream:
+        run("git", "fetch", "--no-tags", GITHUB, "refs/heads/dist")
+        parent = ["-p", run("git", "rev-parse", "FETCH_HEAD")]
+    commit = run("git", "commit-tree", tree, *parent, "-m", f"bailu {version}")
+    run("git", "push", GITHUB, f"{commit}:refs/heads/dist")
     # The network keeps what a branch served for hours; a release puts other
     # files on the branch, so each is asked for afresh.
     for path in [*assets(), staging / "VERSION.txt"]:
@@ -138,7 +172,8 @@ def delivery_network(version: str) -> None:
     print("dist branch:", commit[:7])
 
 
-def gitee_call(token: str, path: str, data: bytes | None = None, content_type: str = "application/json", timeout: int = 60) -> object:
+def gitee_call(token: str, path: str, data: bytes | None = None, content_type: str = "application/json", timeout: int = 60,
+               allow_missing: bool = False) -> object:
     """One call to the API of the mirror; what it refuses is the message it answers."""
     request = urllib.request.Request(GITEE_API + path, method="POST" if data else "GET", data=data,
                                      headers={"Authorization": f"token {token}", "Content-Type": content_type})
@@ -146,25 +181,24 @@ def gitee_call(token: str, path: str, data: bytes | None = None, content_type: s
         with urllib.request.urlopen(request, timeout=timeout) as response:
             return json.loads(response.read())
     except urllib.error.HTTPError as error:
-        raise SystemExit(f"Gitee did not take {path}: {error.code} {error.read().decode('utf-8', errors='replace')[:300]}")
+        if allow_missing and error.code == 404:
+            return None
+        detail = error.read().decode("utf-8", errors="replace").replace(token, "[redacted]")[:300]
+        raise SystemExit(f"Gitee did not take {path}: {error.code} {detail}")
 
 
-def gitee(version: str) -> None:
-    token = os.environ.get("GITEE_TOKEN")
-    if not token:
-        print("GITEE_TOKEN is not set: the Gitee mirror was not updated.")
-        return
-    run("git", "push", "--force", "origin", "HEAD:refs/heads/main")
+def gitee(version: str, commit: str, token: str) -> None:
     # The token is given to this one push in a helper, so that it is not kept.
     # The empty value before it clears the helpers set on the machine: one of
     # them may ask for an account in a window of its own, and keep what it is
     # given in the credential store.
     helper = "!f() { echo username=Muguett; echo password=$GITEE_TOKEN; }; f"
-    run("git", "-c", "credential.helper=", "-c", f"credential.helper={helper}", "push", GITEE + ".git", "HEAD:refs/heads/main",
+    run("git", "-c", "credential.helper=", "-c", f"credential.helper={helper}", "push", GITEE + ".git",
+        f"{commit}:refs/heads/main", f"refs/tags/{version}",
         env={"GIT_TERMINAL_PROMPT": "0", "GCM_INTERACTIVE": "never"})
     # The release is made once, and an attachment that is there already is left
     # alone: a run that broke off is finished by running it again.
-    release = next((one for one in gitee_call(token, "/releases") if one.get("tag_name") == version), None)
+    release = gitee_call(token, f"/releases/tags/{version}", allow_missing=True)
     if release is None:
         release = gitee_call(token, "/releases", json.dumps({"tag_name": version, "name": f"bailu {version}",
                                                            "body": (OUT / "notes.md").read_text(encoding="utf-8"),
@@ -182,19 +216,24 @@ def gitee(version: str) -> None:
 
 def main() -> None:
     version = sys.argv[1] if len(sys.argv) > 1 else "v" + version_in_tool()
-    if not version.startswith("v"):
+    if not re.fullmatch(r"v\d+\.\d+\.\d+", version):
         raise SystemExit("name the release as vX.Y.Z")
+    token = os.environ.get("GITEE_TOKEN")
+    if not token:
+        raise SystemExit("set GITEE_TOKEN before publishing to both repositories")
     deploy = (ROOT / "scripts" / "deploy.py").read_text(encoding="utf-8")
     if version[1:] != version_in_tool() or f'VERSION = "{version[1:]}"' not in deploy:
         raise SystemExit("the version of the tool, of deploy.py and the release differ")
-    if run("git", "status", "--porcelain", "--untracked-files=no"):
+    if run("git", "status", "--porcelain", "--untracked-files=normal"):
         raise SystemExit("commit the changes first")
     run("go", "test", "./...", cwd=TOOL, env={"GOFLAGS": "-p=4"})
     run(sys.executable, "-m", "unittest", "discover", "-s", "scripts", "-p", "test_*.py")
     archives = build(version[1:])
+    commit = ensure_tag(version)
+    run("git", "push", "--atomic", GITHUB + ".git", f"{commit}:refs/heads/main", f"refs/tags/{version}")
     github(version)
+    gitee(version, commit, token)
     delivery_network(version)
-    gitee(version)
     print("published", version, ":", ", ".join(path.name for path in assets()), f"({len(archives)} archives)")
 
 

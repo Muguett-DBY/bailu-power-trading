@@ -829,7 +829,11 @@ func loadShiftMarkdown(in loadShiftInput, r loadShiftResult, notes []string) str
 	} else {
 		row = append(row, "", "", "")
 	}
-	row = append(row, formatYuan(r.Gain), formatRatio(r.CriticalRatio), formatRatio(in.SourcePrice.Div(in.TargetPrice)))
+	currentRatio := "—"
+	if in.TargetPrice.Sign() > 0 {
+		currentRatio = formatRatio(in.SourcePrice.Div(in.TargetPrice))
+	}
+	row = append(row, formatYuan(r.Gain), formatRatio(r.CriticalRatio), currentRatio)
 	table.rows = append(table.rows, row)
 	var out strings.Builder
 	out.WriteString(head + table.String())

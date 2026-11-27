@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"encoding/csv"
 	"errors"
 	"fmt"
@@ -11,8 +12,10 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/shopspring/decimal"
+	"golang.org/x/text/encoding/simplifiedchinese"
 )
 
 // The ledger keeps the record of a trading desk inside its project: what was
@@ -184,36 +187,53 @@ func readField(field ledgerField, text string) (string, error) {
 	return text, nil
 }
 
-// readLedger reads the entries of one kind; a ledger not started yet is empty.
-// The files are UTF-8; one saved by Excel in GB18030 still reads.
+// ledgerCSV keeps the format of an existing ledger so appends preserve it.
+type ledgerCSV struct {
+	header       []string
+	entries      []ledgerEntry
+	legacy       bool
+	empty        bool
+	needsNewline bool
+}
+
 func readLedger(folder string, kind ledgerKind) ([]ledgerEntry, error) {
-	raw, err := os.ReadFile(filepath.Join(folder, kind.File))
+	file, err := readLedgerCSV(filepath.Join(folder, kind.File))
+	return file.entries, err
+}
+
+// readLedgerCSV reads UTF-8 and CSV files resaved by Excel in GB18030.
+func readLedgerCSV(path string) (ledgerCSV, error) {
+	var file ledgerCSV
+	raw, err := os.ReadFile(path)
 	if errors.Is(err, os.ErrNotExist) {
-		return nil, nil
+		raw, err = nil, nil
 	}
 	if err != nil {
-		return nil, err
+		return file, err
 	}
+	file.legacy = !utf8.Valid(raw)
+	file.empty = len(raw) == 0
+	content := bytes.TrimPrefix(raw, []byte{0xEF, 0xBB, 0xBF})
+	file.needsNewline = len(content) > 0 && content[len(content)-1] != '\n'
 	reader := csv.NewReader(strings.NewReader(decodeTable(raw)))
 	reader.LazyQuotes, reader.FieldsPerRecord = true, -1
-	header, err := reader.Read()
+	file.header, err = reader.Read()
 	if errors.Is(err, io.EOF) {
-		return nil, nil
+		return file, nil
 	}
 	if err != nil {
-		return nil, fmt.Errorf("%s 读不出来：%w", kind.File, err)
+		return file, fmt.Errorf("%s 读不出来：%w", filepath.Base(path), err)
 	}
-	var entries []ledgerEntry
 	for {
 		record, err := reader.Read()
 		if errors.Is(err, io.EOF) {
-			return entries, nil
+			return file, nil
 		}
 		if err != nil {
-			return nil, fmt.Errorf("%s 读不出来：%w", kind.File, err)
+			return file, fmt.Errorf("%s 读不出来：%w", filepath.Base(path), err)
 		}
-		entry := ledgerEntry{Line: len(entries) + 1, Values: map[string]string{}}
-		for i, name := range header {
+		entry := ledgerEntry{Line: len(file.entries) + 1, Values: map[string]string{}}
+		for i, name := range file.header {
 			if i >= len(record) {
 				continue
 			}
@@ -223,7 +243,7 @@ func readLedger(folder string, kind ledgerKind) ([]ledgerEntry, error) {
 				entry.Values[name] = record[i]
 			}
 		}
-		entries = append(entries, entry)
+		file.entries = append(file.entries, entry)
 	}
 }
 
@@ -298,43 +318,58 @@ func ledgerAdd(folder string, words []string, out io.Writer) error {
 	if err := os.MkdirAll(folder, 0o755); err != nil {
 		return err
 	}
-	entries, err := readLedger(folder, kind)
-	if err != nil {
-		return err
-	}
 	path := filepath.Join(folder, kind.File)
-	file, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
+	ledger, err := readLedgerCSV(path)
 	if err != nil {
 		return err
 	}
-	defer file.Close()
-	info, err := file.Stat()
-	if err != nil {
-		return err
+	var data bytes.Buffer
+	if ledger.empty {
+		data.WriteString("\uFEFF")
+	} else if ledger.needsNewline {
+		data.WriteByte('\n')
 	}
-	writer := csv.NewWriter(file)
-	// A new file starts with the mark that tells Excel the text is UTF-8.
-	if info.Size() == 0 {
-		if _, err := file.Write([]byte{0xEF, 0xBB, 0xBF}); err != nil {
-			return err
-		}
-		header := []string{"recorded"}
+	writer := csv.NewWriter(&data)
+	if len(ledger.header) == 0 {
+		ledger.header = []string{"recorded"}
 		for _, field := range kind.Fields {
-			header = append(header, field.Name)
+			ledger.header = append(ledger.header, field.Name)
 		}
-		if err := writer.Write(header); err != nil {
+		if err := writer.Write(ledger.header); err != nil {
 			return err
 		}
 	}
-	record := []string{time.Now().Format("2006-01-02 15:04:05")}
 	for _, field := range kind.Fields {
-		record = append(record, values[field.Name])
+		if values[field.Name] != "" && !slices.Contains(ledger.header, field.Name) {
+			return fmt.Errorf("%s 的表头缺少 %s 列，无法记入%s", kind.File, field.Name, field.Chinese[0])
+		}
+	}
+	recorded := time.Now().Format("2006-01-02 15:04:05")
+	values["recorded"] = recorded
+	record := make([]string, len(ledger.header))
+	for i, column := range ledger.header {
+		record[i] = values[column]
 	}
 	if err := writer.Write(record); err != nil {
 		return err
 	}
 	writer.Flush()
 	if err := writer.Error(); err != nil {
+		return err
+	}
+	payload := data.Bytes()
+	if ledger.legacy {
+		payload, err = simplifiedchinese.GB18030.NewEncoder().Bytes(payload)
+		if err != nil {
+			return err
+		}
+	}
+	file, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
+	if err != nil {
+		return err
+	}
+	_, writeErr := file.Write(payload)
+	if err := errors.Join(writeErr, file.Close()); err != nil {
 		return err
 	}
 	var said []string
@@ -350,8 +385,8 @@ func ledgerAdd(folder string, words []string, out io.Writer) error {
 			said = append(said, what)
 		}
 	}
-	_, err = fmt.Fprintf(out, "已记入%s（%s 第 %d 条）：%s；记录于 %s。\n", kind.Title, filepath.ToSlash(path), len(entries)+1,
-		strings.Join(said, "；"), record[0])
+	_, err = fmt.Fprintf(out, "已记入%s（%s 第 %d 条）：%s；记录于 %s。\n", kind.Title, filepath.ToSlash(path), len(ledger.entries)+1,
+		strings.Join(said, "；"), recorded)
 	return err
 }
 

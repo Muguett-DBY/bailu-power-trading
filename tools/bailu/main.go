@@ -25,7 +25,7 @@ import (
 	"time"
 )
 
-const version = "0.2.1"
+const version = "0.2.2"
 
 const usage = `bailu ` + version + ` — 电力交易框架的工具。数字由程序算，条文出自原文。
 
@@ -43,7 +43,12 @@ const usage = `bailu ` + version + ` — 电力交易框架的工具。数字由
   bailu handbook "<问题>"             检索内置手册，给出主题原文和出处
   bailu tariff "<问题>"               查省级电网输配电价、线损率、煤电容量电价
   bailu table "<问题>" <电价表文件>...  统计或比较电价表（CSV、Excel）
-  bailu docs <文件夹或文件> "<问题>"    在政策文件里检索条款原文
+  bailu docs "<问题>"                 在内置官方文件库中检索原文
+  bailu docs <文件夹或文件> "<问题>"    在指定文件中检索原文
+  bailu policy search "<关键词>" [--province 天津] [--text "正文短语"]
+                                      检索随附的 ECNote 政策快照
+  bailu policy show <文档ID> ["<问题>"] [--archive <目录>]
+                                      读取镜像文档或相关原文摘录
   bailu compute "<算式>"              精确四则运算
   bailu extract <文件>...             把政策文件（PDF、Word、文本）转成纯文本
   bailu check <表格文件>...           体检电价表、负荷表：缺值、重复、乱序、缺时段、离群值
@@ -181,6 +186,8 @@ func run(args []string, out io.Writer) error {
 	}
 	// The commands on the project's own files and records need nothing of the knowledge base.
 	switch command {
+	case "policy":
+		return policyCommand(o, out)
 	case "check":
 		if err := o.only(); err != nil {
 			return err
@@ -215,6 +222,9 @@ func run(args []string, out io.Writer) error {
 	turn, err := turnOf(command, o)
 	if err != nil {
 		return err
+	}
+	if command == "docs" && turn.project == "" && len(turn.inputs) == 0 {
+		turn.project = filepath.Join(home, "knowledge", "documents")
 	}
 	return answer(tools, command, turn, o, out)
 }
@@ -261,7 +271,7 @@ func turnOf(command string, o options) (powerTurn, error) {
 	switch command {
 	case "calc":
 		turn.message = o.message
-	case "table", "docs":
+	case "docs", "table":
 		// The files are told from the question by what they are named like,
 		// whichever of the two is written first.
 		var question []string
@@ -273,22 +283,25 @@ func turnOf(command string, o options) (powerTurn, error) {
 			}
 		}
 		turn.message = strings.Join(question, " ")
-		wants, how := "至少一个电价表文件", "bailu table \"哪个月实时均价最高\" 价格表.csv"
-		if command == "docs" {
-			wants, how = "文件夹或文件", "bailu docs 政策文件夹 \"申报价格上限是第几条\""
+		if turn.message == "" {
+			turn.message = o.message
 		}
-		if len(files) == 0 || turn.message == "" {
-			return turn, fmt.Errorf("bailu %s 要有%s，和一个问题，例如 %s", command, wants, how)
+		if command == "table" && (len(files) == 0 || turn.message == "") {
+			return turn, errors.New("bailu table 要有至少一个电价表文件，和一个问题，例如 bailu table \"哪个月实时均价最高\" 价格表.csv")
 		}
 		if command == "docs" {
-			// A folder named among the files is the library searched; the files are read as well.
-			for i, file := range files {
+			documents := files[:0]
+			for _, file := range files {
 				if info, err := os.Stat(file); err == nil && info.IsDir() {
+					if turn.project != "" {
+						return turn, errors.New("bailu docs 每次只能指定一个文件夹，可以再加文件")
+					}
 					turn.project = file
-					files = slices.Delete(files, i, i+1)
-					break
+				} else {
+					documents = append(documents, file)
 				}
 			}
+			files = documents
 		}
 	default:
 		// The question is the words of the command, or the one given with --message.
@@ -311,14 +324,11 @@ func turnOf(command string, o options) (powerTurn, error) {
 // looksLikePath says whether a word names a file or a folder that is there, or
 // is written like one: with a separator, or ending in an extension the tools read.
 func looksLikePath(word string) bool {
-	if strings.ContainsAny(word, `/\`) {
-		return true
-	}
 	if _, err := os.Stat(word); err == nil {
 		return true
 	}
 	// Written like a file, whatever its type: a type the tools do not read is then said so.
-	return fileExtension.MatchString(word)
+	return fileExtension.MatchString(word) || strings.ContainsRune(word, '\\') || strings.HasPrefix(word, "/") || strings.HasPrefix(word, "./") || strings.HasPrefix(word, "../")
 }
 
 // fileExtension is the end of a word written as the name of a file.

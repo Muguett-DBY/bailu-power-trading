@@ -257,6 +257,31 @@ func TestCurveChecksABatteryPlan(t *testing.T) {
 	coreWants(t, said, "充电、放电各一列", "| 功率上限 | 不通过（1 处） | 00:15 功率超过 55 兆瓦 |")
 }
 
+func TestCurveReportsUnreadableBatteryCells(t *testing.T) {
+	path := coreSample(t, "storage.csv", "时间,储能功率\n00:00,20\n00:15,\n00:30,无效\n00:45,0\n")
+	said := coreSay(t, "curve", path, "--capacity", "100")
+	coreWants(t, said, "| 读数 | 不通过（1 处） | 00:15、00:30 单元格不是数字 |", "| 电量与 SOC | 未检查 |")
+}
+
+func TestCurveDistinguishesChargeAndDischargeHeaders(t *testing.T) {
+	path := coreSample(t, "storage.csv", "时间,充电功率(MW),discharge power(MW)\n00:00,20,0\n00:15,0,8\n")
+	said := coreSay(t, "curve", path, "--capacity", "100")
+	coreWants(t, said, "充电、放电各一列", "从电网充电 5 兆瓦时，向电网放电 2 兆瓦时")
+}
+
+func TestCurveNormalizesTheUnitsOfItsColumns(t *testing.T) {
+	load := coreSample(t, "load.csv", "时间,负荷(千瓦)\n00:00,1000\n00:15,2000\n")
+	coreWants(t, coreSay(t, "curve", load, "--max", "1.5"), "高于上限 1.5：2.00 兆瓦")
+
+	storage := coreSample(t, "storage.csv", "时间,充电功率(kW),放电电量(kWh)\n00:00,1000,0\n00:15,0,500\n")
+	coreWants(t, coreSay(t, "curve", storage, "--capacity", "100", "--power", "1.5"),
+		"从电网充电 0.25 兆瓦时，向电网放电 0.5 兆瓦时", "00:15 功率超过 1.5 兆瓦")
+
+	bid := coreSample(t, "bid.csv", "价格（元/千瓦时）,申报电量（千瓦时）\n0.3,1000\n0.4,500\n")
+	coreWants(t, coreSay(t, "curve", bid, "--price-max", "350"),
+		"价格 400.00 高于上限 350", "电量合计 1 兆瓦时，按各段价格成交的加权平均价 350.00 元/兆瓦时")
+}
+
 func TestCurveRefusesWhatItCannotMeasure(t *testing.T) {
 	path := coreSample(t, "load.csv", "时间,负荷\n00:00,60\n")
 	coreRefuse(t, "只认 buy（购电）或 sell（售电）", "curve", path, "--side", "both")
@@ -339,6 +364,24 @@ func TestLedgerReadsAFileExcelSavedInGB18030(t *testing.T) {
 	}
 	said := coreSay(t, "ledger", "list", "--dir", dir)
 	coreWants(t, said, "| 1 | 2026-11-27 10:00:00 | 2026-12-01 | 1000 | 430 | 白天的用电 |")
+	coreSay(t, "ledger", "add", "计量", "日期=2026-12-02", "电量=1200", "实时均价=435", "备注=夜间用电", "--dir", dir)
+	said = coreSay(t, "ledger", "list", "--dir", dir)
+	coreWants(t, said, "| 1 | 2026-11-27 10:00:00 | 2026-12-01 | 1000 | 430 | 白天的用电 |", "| 2026-12-02 | 1200 | 435 | 夜间用电 |")
+}
+
+func TestLedgerAppendsInTheExistingColumnOrder(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(dir, "ledger"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	const raw = "note,rt,mwh,date,recorded\n原记录,430,1000,2026-12-01,2026-11-27 10:00:00"
+	path := filepath.Join(dir, "ledger", "metered.csv")
+	if err := os.WriteFile(path, []byte(raw), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	coreSay(t, "ledger", "add", "计量", "日期=2026-12-02", "电量=1200", "实时均价=435", "备注=新记录", "--dir", dir)
+	said := coreSay(t, "ledger", "list", "--dir", dir)
+	coreWants(t, said, "| 1 | 2026-11-27 10:00:00 | 2026-12-01 | 1000 | 430 | 原记录 |", "| 2026-12-02 | 1200 | 435 | 新记录 |")
 }
 
 func TestReviewSetsTheDaysAgainstWhatCoveredThem(t *testing.T) {
@@ -417,6 +460,21 @@ func TestReviewSpreadsAContractOverItsDaysAndCountsASaleAsNegative(t *testing.T)
 	}
 }
 
+func TestReviewAveragesOnlyTheMeteredVolumeWithPrices(t *testing.T) {
+	dir := t.TempDir()
+	coreSay(t, "ledger", "add", "计量", "日期=2026-12-01", "电量=100", "实时均价=430", "--dir", dir)
+	coreSay(t, "ledger", "add", "计量", "日期=2026-12-02", "电量=100", "--dir", dir)
+	said := coreSay(t, "review", "--dir", dir)
+	coreWants(t, said, "| 合计 | 200 | 430.00 |", "有 1 天没有实时价")
+}
+
+func TestReviewHandlesZeroUseWithAPrice(t *testing.T) {
+	dir := t.TempDir()
+	coreSay(t, "ledger", "add", "计量", "日期=2026-12-01", "电量=0", "实时均价=430", "--dir", dir)
+	said := coreSay(t, "review", "--dir", dir)
+	coreWants(t, said, "| 合计 | 0 | — |", "| 0.00 元 | 0.00 元 | +0.00 元 |")
+}
+
 func TestRiskDescribesTheTailOfAPriceSeries(t *testing.T) {
 	// Twenty hourly prices, 1 to 20 yuan/MWh.
 	var table strings.Builder
@@ -446,6 +504,28 @@ func TestRiskDescribesTheTailOfAPriceSeries(t *testing.T) {
 	coreRefuse(t, "--side 只认", "risk", path, "--side", "both")
 	coreRefuse(t, "读不了 none.csv", "risk", filepath.Join(t.TempDir(), "none.csv"))
 	coreRefuse(t, "bailu risk 要给出一个电价表文件", "risk")
+}
+
+func TestRiskConvertsMegawattHourExposureToThePriceUnit(t *testing.T) {
+	path := coreSample(t, "prices.csv", "时间,价格（元/千瓦时）\n00:00,0.1\n01:00,0.2\n02:00,0.3\n03:00,0.4\n")
+	said := coreSay(t, "risk", path, "--mwh", "4", "--confidence", "75")
+	coreWants(t, said, "比按均价多花 150.00 元", "最大回撤 200.00 元")
+}
+
+func TestRiskRefusesAnUnknownPriceColumn(t *testing.T) {
+	path := coreSample(t, "prices.csv", "时间,日前价格,实时价格\n00:00,300,200\n01:00,400,450\n")
+	coreRefuse(t, "--column 只认", "risk", path, "--column", "realtmie")
+	coreWants(t, coreSay(t, "risk", path, "--column", "实时"), "prices.csv（实时价格", "均值 325.00")
+}
+
+func TestRiskUsesFractionalTailAtTheBoundary(t *testing.T) {
+	path := coreSample(t, "prices.csv", "时间,价格（元/兆瓦时）\n00:00,100\n01:00,200\n02:00,300\n03:00,400\n")
+	for _, test := range []struct{ side, tail string }{{"buy", "366.67"}, {"sell", "133.33"}} {
+		t.Run(test.side, func(t *testing.T) {
+			said := coreSay(t, "risk", path, "--side", test.side, "--mwh", "4", "--confidence", "62.5%")
+			coreWants(t, said, test.tail+" 元/兆瓦时", "37.5% 时段的平均价格", "比按均价多花 175.00 元")
+		})
+	}
 }
 
 func TestOptionsTakeWhatACommandNeedsAndRefuseTheRest(t *testing.T) {
