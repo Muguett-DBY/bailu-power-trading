@@ -40,6 +40,7 @@ func TestPolicyArchiveSearchAndShow(t *testing.T) {
 		absent string
 	}{
 		{"filters", []string{"search", "--province", "天津", "--category", "结算", "--published-by", "2026-03-01", "--text", "自然月"}, []string{"TJ-OLD", "收录标签"}, "TJ-DRAFT"},
+		{"latest body match", []string{"search", "--text", "自然月", "--limit", "1"}, []string{"TJ-DRAFT"}, "TJ-OLD"},
 		{"number", []string{"search", "津示例〔2026〕1号", "--limit", "1"}, []string{"TJ-OLD"}, "HE-NEW"},
 		{"excerpt", []string{"show", "TJ-OLD", "结算周期"}, []string{"【第二条】", "https://example.com/doc/TJ-OLD", "已废止"}, "披露计划"},
 		{"empty search", []string{"search", "--province", "广东"}, []string{"没有找到匹配文档"}, "TJ-OLD"},

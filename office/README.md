@@ -8,7 +8,7 @@ uv run --project office --locked --cache-dir .cache/uv python office/read_file.p
 uv run --project office --locked --cache-dir .cache/uv python office/read_file.py 结算单.pdf --start 3 --limit 2
 ```
 
-`read_file.py` 按行读 Excel，按页读 PDF，按文档块读 Word，按幻灯片读 PowerPoint。编号从 1 开始。Excel 输出公式本身，计算后的值应从已重算的原工作簿确认。扫描 PDF 需要先取得可搜索的文字层。
+`read_file.py` 按行读 Excel，按页读 PDF，按文档块读 Word，按幻灯片读 PowerPoint。编号从 1 开始。Excel 默认输出公式本身，加 `--formula-cache` 可同时查看选定行的公式、缓存值和缓存状态。需要最新计算值时，请先重算并保存原工作簿的副本。扫描 PDF 需要先取得可搜索的文字层。
 
 ## 核对结算总表
 
@@ -21,7 +21,7 @@ bailu reconcile 总表.xlsx 十月.pdf 十一月.pdf --spec 对账配置.json --
 uv run --project office --locked --cache-dir .cache/uv python office/report.py 核对.json --reconcile --output 交付/月度核对
 ```
 
-核对结果包含一致、超差和缺项，差额方向为账单减总表。原始表格、PDF 保持原样。生成的 Excel 保留精确值及原文位置，数值按文本保存以避免精度改变。PPT 提供摘要及复核事项，较长文字保留在演讲者备注中。需要追溯时看 Word 或 Excel 明细。
+核对结果包含一致、超差和缺项，差额方向为账单减总表。可用的 Excel 公式缓存随公式和格位一并记录。公式缺少缓存会单独提示，有原文件或位置的缺项会保留证据。原始表格、PDF 保持原样。生成的 Excel 保留精确值及原文位置，数值按文本保存以避免精度改变。PPT 提供摘要及复核事项，较长文字保留在演讲者备注中。需要追溯时看 Word 或 Excel 明细。
 
 ## 输出一般报告
 

@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"math"
 	"regexp"
+	"slices"
 	"sort"
 	"strings"
 	"unicode"
@@ -71,6 +72,10 @@ func reconcileWorkbook(path string, spec reconcileSpec) (map[string]reconcileRow
 			return nil, fmt.Errorf("工作表 %q 第 %d 行没有表头 %q", spec.Sheet, spec.HeaderRow, name)
 		}
 	}
+	merges, err := reconcileMergeRanges(book, spec.Sheet)
+	if err != nil {
+		return nil, err
+	}
 	col := columns[spec.WorkbookPeriod]
 	months := make(map[string]reconcileRow)
 	firstCell := make(map[string]string)
@@ -113,22 +118,63 @@ func reconcileWorkbook(path string, spec reconcileSpec) (map[string]reconcileRow
 		for _, field := range spec.Fields {
 			col := columns[field.WorkbookColumn]
 			valueText := reconcileCell(cells, col)
-			if valueText == "" || valueText == "-" || valueText == "—" {
-				continue
-			}
 			cell, err := excelize.CoordinatesToCellName(col+1, rowNumber)
 			if err != nil {
 				return nil, err
+			}
+			evidence := reconcileEvidence{Source: path, Sheet: spec.Sheet, Cell: cell}
+			// Excelize resolves covered cells to the top-left formula; the raw value belongs to the requested cell.
+			if !slices.ContainsFunc(merges, func(merged reconcileMergeRange) bool { return merged.covers(col+1, rowNumber) }) {
+				formula, err := book.GetCellFormula(spec.Sheet, cell)
+				if err != nil {
+					return nil, fmt.Errorf("%s!%s：%w", spec.Sheet, cell, err)
+				}
+				if formula != "" {
+					evidence.Formula = "=" + strings.TrimPrefix(formula, "=")
+				}
+			}
+			if valueText == "" || valueText == "-" || valueText == "—" {
+				row.addEvidence(field.Name, evidence)
+				continue
 			}
 			unit, value, err := reconcileQuantity(valueText, field.WorkbookUnit, field.Unit)
 			if err != nil {
 				return nil, fmt.Errorf("%s!%s：%w", spec.Sheet, cell, err)
 			}
-			row.Values[field.Name] = &reconcileValue{Source: path, Sheet: spec.Sheet, Cell: cell, Raw: valueText, Unit: unit, Value: value}
+			row.Values[field.Name] = &reconcileValue{reconcileEvidence: evidence, Raw: valueText, Unit: unit, Value: value}
 		}
 		months[period] = row
 	}
 	return months, nil
+}
+
+type reconcileMergeRange struct {
+	firstCol, firstRow, lastCol, lastRow int
+}
+
+func (region reconcileMergeRange) covers(col, row int) bool {
+	return row >= region.firstRow && row <= region.lastRow && col >= region.firstCol && col <= region.lastCol &&
+		(col != region.firstCol || row != region.firstRow)
+}
+
+func reconcileMergeRanges(book *excelize.File, sheet string) ([]reconcileMergeRange, error) {
+	merged, err := book.GetMergeCells(sheet, true)
+	if err != nil {
+		return nil, err
+	}
+	ranges := make([]reconcileMergeRange, 0, len(merged))
+	for _, merge := range merged {
+		firstCol, firstRow, err := excelize.CellNameToCoordinates(merge.GetStartAxis())
+		if err != nil {
+			return nil, err
+		}
+		lastCol, lastRow, err := excelize.CellNameToCoordinates(merge.GetEndAxis())
+		if err != nil {
+			return nil, err
+		}
+		ranges = append(ranges, reconcileMergeRange{firstCol, firstRow, lastCol, lastRow})
+	}
+	return ranges, nil
 }
 
 func reconcileCell(row []string, column int) string {
@@ -231,7 +277,9 @@ func reconcilePDF(path string, spec reconcileSpec) (string, reconcileRow, error)
 					continue
 				}
 				valueText := strings.TrimSpace(match[1])
+				evidence := reconcileEvidence{Source: path, Page: page}
 				if valueText == "" || valueText == "-" || valueText == "—" {
+					bill.addEvidence(field.Name, evidence)
 					break
 				}
 				if previous := bill.Values[field.Name]; previous != nil {
@@ -241,7 +289,7 @@ func reconcilePDF(path string, spec reconcileSpec) (string, reconcileRow, error)
 				if err != nil {
 					return "", bill, fmt.Errorf("第 %d 页的 %q：%w", page, field.PDFLabel, err)
 				}
-				bill.Values[field.Name] = &reconcileValue{Source: path, Page: page, Raw: valueText, Unit: unit, Value: value}
+				bill.Values[field.Name] = &reconcileValue{reconcileEvidence: evidence, Raw: valueText, Unit: unit, Value: value}
 				break
 			}
 		}

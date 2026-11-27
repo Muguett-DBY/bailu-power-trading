@@ -21,7 +21,8 @@ import (
 type dayReview struct {
 	Date                    string
 	Metered                 decimal.Decimal  // MWh
-	RealTime                *decimal.Decimal // yuan/MWh; nil when the day has none
+	RealTime                *decimal.Decimal // volume-weighted yuan/MWh, nil without complete pricing
+	MeteredCost             decimal.Decimal  // sum of metered volume × price, before averaging the price
 	Contract, Ahead         decimal.Decimal  // MWh
 	ContractCost, AheadCost decimal.Decimal  // yuan, at the prices the energy was traded at
 }
@@ -31,13 +32,58 @@ func (d dayReview) deviation() decimal.Decimal {
 }
 
 // cost is what the day's energy comes to: the contracts and the declaration at
-// their prices, what is left over at the real-time price.
+// their prices, what is left over at the weighted real-time price.
 func (d dayReview) cost() decimal.Decimal {
-	return d.ContractCost.Add(d.AheadCost).Add(d.deviation().Mul(*d.RealTime))
+	return d.MeteredCost.Sub(d.Contract.Add(d.Ahead).Mul(*d.RealTime)).Add(d.ContractCost).Add(d.AheadCost)
 }
 
-func (d dayReview) spotCost() decimal.Decimal {
-	return d.Metered.Mul(*d.RealTime)
+type meteredDay struct {
+	dayReview
+	missingPrices []int
+	firstMeterRow int
+	fallbackRows  int
+	zeroPrice     *decimal.Decimal
+	zeroConflict  bool
+}
+
+func (d *meteredDay) addMetering(entry ledgerEntry, fallback *decimal.Decimal) error {
+	volume, err := ledgerEnergy(entry.Values["mwh"])
+	if err != nil || volume.IsNegative() {
+		return fmt.Errorf("metered.csv 第 %d 条（%s）的电量应为非负数：%q", entry.Line, d.Date, entry.Values["mwh"])
+	}
+	rate := fallback
+	if text := strings.TrimSpace(entry.Values["rt"]); text != "" {
+		value, err := ledgerPrice(text)
+		if err != nil {
+			return fmt.Errorf("metered.csv 第 %d 条（%s）的实时价无法读取：%q", entry.Line, d.Date, text)
+		}
+		rate = &value
+	} else if fallback != nil {
+		d.fallbackRows++
+	}
+	d.Metered = d.Metered.Add(volume)
+	if volume.IsZero() {
+		if rate != nil {
+			d.zeroConflict = d.zeroConflict || d.zeroPrice != nil && !d.zeroPrice.Equal(*rate)
+			d.zeroPrice = rate
+		}
+	} else if rate == nil {
+		d.missingPrices = append(d.missingPrices, entry.Line)
+	} else {
+		d.MeteredCost = d.MeteredCost.Add(volume.Mul(*rate))
+	}
+	return nil
+}
+
+func (d *meteredDay) finishPricing() {
+	switch {
+	case len(d.missingPrices) != 0:
+	case d.Metered.IsPositive():
+		price := d.MeteredCost.Div(d.Metered)
+		d.RealTime = &price
+	case !d.zeroConflict:
+		d.RealTime = d.zeroPrice
+	}
 }
 
 // average is the price an energy was traded at, "—" when there is none.
@@ -58,8 +104,12 @@ type reviewResult struct {
 	// ContractGain and AheadGain are what each part saved against the real-time price.
 	ContractGain, AheadGain decimal.Decimal
 	Priced                  int
-	// LeftOut names the declarations that could not be counted.
-	LeftOut []string
+	// LeftOut names the declarations that could not be counted. Superseded
+	// declarations have confirmed fills on their delivery date and side.
+	LeftOut, Superseded, Unpriced []string
+	Fallback                      *decimal.Decimal
+	FallbackRows                  int
+	ConfirmedAhead                bool
 }
 
 // nextDay is the date after one written as 2006-01-02.
@@ -81,54 +131,68 @@ func dayAhead(market string) bool {
 	return containsAny(strings.ToLower(market), "日前", "day-ahead", "dayahead", "day ahead")
 }
 
+type aheadPosition struct {
+	date string
+	sold bool
+}
+
 // reviewLedger sets the days of a period against the trades and declarations
 // that cover them. from and to bound the days, "" being no bound; spot is the
-// real-time price for days whose record does not carry one.
+// real-time price for metering rows whose record does not carry one.
 func reviewLedger(trades, declarations, metered []ledgerEntry, from, to string, spot *decimal.Decimal) (reviewResult, error) {
-	r := reviewResult{From: from, To: to}
-	days := map[string]*dayReview{}
+	r := reviewResult{From: from, To: to, Fallback: spot}
+	days := map[string]*meteredDay{}
 	for _, entry := range metered {
 		date := entry.Values["date"]
+		if _, err := time.Parse(time.DateOnly, date); err != nil {
+			return r, fmt.Errorf("metered.csv 第 %d 条的日期应为 YYYY-MM-DD：%q", entry.Line, date)
+		}
 		if date < from || to != "" && date > to {
 			continue
 		}
-		one := days[date]
-		if one == nil {
-			one = &dayReview{Date: date}
-			days[date] = one
+		day := days[date]
+		if day == nil {
+			day = &meteredDay{dayReview: dayReview{Date: date}, firstMeterRow: entry.Line}
+			days[date] = day
 		}
-		if mwh, err := ledgerEnergy(entry.Values["mwh"]); err == nil {
-			one.Metered = one.Metered.Add(mwh)
-		}
-		if text := entry.Values["rt"]; text != "" {
-			if value, err := ledgerPrice(text); err == nil {
-				one.RealTime = &value
-			}
+		if err := day.addMetering(entry, spot); err != nil {
+			return r, err
 		}
 	}
 	if len(days) == 0 {
 		return r, errors.New("台账里没有这一段的实际用电记录；先用 bailu ledger add 计量 记入每天的用电量和实时均价")
 	}
+	confirmed := map[aheadPosition]bool{}
 	for _, trade := range trades {
 		mwh, err := ledgerEnergy(trade.Values["mwh"])
 		rate, errRate := ledgerPrice(trade.Values["price"])
-		if err != nil || errRate != nil {
+		if err != nil || errRate != nil || mwh.IsNegative() {
 			continue // a line not written by the tool
 		}
 		start, end := trade.Values["date"], trade.Values["date"]
 		if trade.Values["start"] != "" {
 			start, end = trade.Values["start"], trade.Values["end"]
 		}
+		sold := sellingSide(trade.Values["side"])
 		sign := one
-		if sellingSide(trade.Values["side"]) {
+		if sold {
 			sign = decimal.NewFromInt(-1)
 		}
-		// A contract over several days is spread evenly over them.
-		share := mwh.Div(decimal.NewFromInt(int64(countDays(start, end))))
+		// Spread a delivery interval evenly across its recorded days.
+		share := mwh.Div(decimal.NewFromInt(int64(countDays(start, end)))).Mul(sign)
+		cost := share.Mul(rate)
+		ahead := dayAhead(trade.Values["market"])
 		for date := start; date != "" && date <= end; date = nextDay(date) {
 			if bought := days[date]; bought != nil {
-				bought.Contract = bought.Contract.Add(share.Mul(sign))
-				bought.ContractCost = bought.ContractCost.Add(share.Mul(rate).Mul(sign))
+				if ahead {
+					bought.Ahead = bought.Ahead.Add(share)
+					bought.AheadCost = bought.AheadCost.Add(cost)
+					confirmed[aheadPosition{date, sold}] = true
+					r.ConfirmedAhead = true
+				} else {
+					bought.Contract = bought.Contract.Add(share)
+					bought.ContractCost = bought.ContractCost.Add(cost)
+				}
 			}
 		}
 	}
@@ -137,29 +201,41 @@ func reviewLedger(trades, declarations, metered []ledgerEntry, from, to string, 
 		case !dayAhead(entry.Values["market"]):
 			r.LeftOut = append(r.LeftOut, entry.Values["date"]+" "+entry.Values["market"])
 		default:
+			date := entry.Values["date"]
+			sold := sellingSide(entry.Values["side"])
+			if confirmed[aheadPosition{date, sold}] {
+				r.Superseded = append(r.Superseded, fmt.Sprintf("%s（declarations.csv 第 %d 条）", date, entry.Line))
+				continue
+			}
 			mwh, err := ledgerEnergy(entry.Values["mwh"])
 			rate, errRate := ledgerPrice(entry.Values["price"])
-			if err != nil || errRate != nil {
-				r.LeftOut = append(r.LeftOut, entry.Values["date"]+" 申报没有电量或价格")
+			if err != nil || errRate != nil || mwh.IsNegative() {
+				r.LeftOut = append(r.LeftOut, date+" 申报没有可读的电量或价格")
 				continue
 			}
 			sign := one
-			if sellingSide(entry.Values["side"]) {
+			if sold {
 				sign = decimal.NewFromInt(-1)
 			}
-			if declared := days[entry.Values["date"]]; declared != nil {
+			if declared := days[date]; declared != nil {
 				declared.Ahead = declared.Ahead.Add(mwh.Mul(sign))
 				declared.AheadCost = declared.AheadCost.Add(mwh.Mul(rate).Mul(sign))
 			}
 		}
 	}
 	for _, bought := range days {
-		if bought.RealTime == nil {
-			bought.RealTime = spot
+		bought.finishPricing()
+		r.FallbackRows += bought.fallbackRows
+		for _, row := range bought.missingPrices {
+			r.Unpriced = append(r.Unpriced, fmt.Sprintf("%s（metered.csv 第 %d 条缺实时价）", bought.Date, row))
 		}
-		r.Days = append(r.Days, *bought)
+		if bought.Metered.IsZero() && bought.RealTime == nil {
+			r.Unpriced = append(r.Unpriced, fmt.Sprintf("%s（metered.csv 第 %d 条起的零电量记录无法确定单一实时价）", bought.Date, bought.firstMeterRow))
+		}
+		r.Days = append(r.Days, bought.dayReview)
 	}
 	slices.SortFunc(r.Days, func(a, b dayReview) int { return strings.Compare(a.Date, b.Date) })
+	slices.Sort(r.Unpriced)
 	for _, one := range r.Days {
 		// The energies and what they were traded at are summed over every day;
 		// what the day finally cost only over the days that have a real-time price.
@@ -171,7 +247,7 @@ func reviewLedger(trades, declarations, metered []ledgerEntry, from, to string, 
 		}
 		r.Priced++
 		r.PricedMetered = r.PricedMetered.Add(one.Metered)
-		r.Cost, r.SpotCost = r.Cost.Add(one.cost()), r.SpotCost.Add(one.spotCost())
+		r.Cost, r.SpotCost = r.Cost.Add(one.cost()), r.SpotCost.Add(one.MeteredCost)
 		// What each part saved against the real-time price: its energy at that price less what it cost.
 		r.ContractGain = r.ContractGain.Add(one.Contract.Mul(*one.RealTime).Sub(one.ContractCost))
 		r.AheadGain = r.AheadGain.Add(one.Ahead.Mul(*one.RealTime).Sub(one.AheadCost))
@@ -199,13 +275,18 @@ func portion(part, whole decimal.Decimal) string {
 func reviewMarkdown(r reviewResult) string {
 	var out strings.Builder
 	fmt.Fprintf(&out, "**交易复盘（%d 天，%s 至 %s）**\n\n", len(r.Days), r.Days[0].Date, r.Days[len(r.Days)-1].Date)
+	ahead := "日前申报"
+	if r.ConfirmedAhead {
+		ahead = "日前电量"
+	}
 	list := markdownTable{header: []string{"日期", "实际用电（兆瓦时）", "实时价（元/兆瓦时）", "中长期电量（兆瓦时）", "中长期均价（元/兆瓦时）",
-		"日前申报（兆瓦时）", "日前均价（元/兆瓦时）", "偏差电量（兆瓦时）", "电费（元）", "全按实时价（元）", "节省（元）"}}
+		ahead + "（兆瓦时）", "日前均价（元/兆瓦时）", "偏差电量（兆瓦时）", "电费（元）", "全按实时价（元）", "节省（元）"}}
 	for _, one := range r.Days {
 		rate, cost, spot, saving := "—", "—", "—", "—"
 		if one.RealTime != nil {
-			rate, cost, spot = one.RealTime.StringFixed(2), formatMoney(one.cost()), formatMoney(one.spotCost())
-			saving = signed(one.spotCost().Sub(one.cost()), formatMoney)
+			actual := one.cost()
+			rate, cost, spot = one.RealTime.StringFixed(2), formatMoney(actual), formatMoney(one.MeteredCost)
+			saving = signed(one.MeteredCost.Sub(actual), formatMoney)
 		}
 		list.rows = append(list.rows, []string{one.Date, formatMwh(one.Metered), rate, formatMwh(one.Contract), average(one.Contract, one.ContractCost),
 			formatMwh(one.Ahead), average(one.Ahead, one.AheadCost), signed(one.deviation(), formatMwh), cost, spot, saving})
@@ -216,8 +297,8 @@ func reviewMarkdown(r reviewResult) string {
 	if r.Priced > 0 {
 		spotAverage, cost, spot, saving = average(r.PricedMetered, r.SpotCost), formatMoney(r.Cost), formatMoney(r.SpotCost),
 			signed(r.Saving, formatMoney)
-		attribution = fmt.Sprintf("归因：比全部按实时价结算%s %s，其中中长期合约%s %s，日前申报%s %s。", saved(r.Saving),
-			formatMoney(r.Saving.Abs()), saved(r.ContractGain), formatMoney(r.ContractGain.Abs()), saved(r.AheadGain), formatMoney(r.AheadGain.Abs()))
+		attribution = fmt.Sprintf("归因：比全部按实时价结算%s %s，其中中长期合约%s %s，%s%s %s。", saved(r.Saving),
+			formatMoney(r.Saving.Abs()), saved(r.ContractGain), formatMoney(r.ContractGain.Abs()), ahead, saved(r.AheadGain), formatMoney(r.AheadGain.Abs()))
 	}
 	list.rows = append(list.rows, []string{"合计", formatMwh(r.Metered), spotAverage, formatMwh(r.Contract), average(r.Contract, r.ContractCost),
 		formatMwh(r.Ahead), average(r.Ahead, r.AheadCost), signed(r.Deviation, formatMwh), cost, spot, saving})
@@ -226,19 +307,28 @@ func reviewMarkdown(r reviewResult) string {
 	if !r.Metered.IsZero() && !r.Deviation.IsNegative() {
 		deviationRate = "+" + deviationRate
 	}
-	fmt.Fprintf(&out, "\n持仓：中长期覆盖率 %s，日前申报占 %s，合计锁定 %s；偏差电量 %s 兆瓦时（偏差率 %s），按实时价结算，是敞口所在。\n",
-		portion(r.Contract, r.Metered), portion(r.Ahead, r.Metered), portion(r.Contract.Add(r.Ahead), r.Metered),
+	fmt.Fprintf(&out, "\n持仓：中长期覆盖率 %s，%s占 %s，合计锁定 %s；偏差电量 %s 兆瓦时（偏差率 %s），按实时价结算，是敞口所在。\n",
+		portion(r.Contract, r.Metered), ahead, portion(r.Ahead, r.Metered), portion(r.Contract.Add(r.Ahead), r.Metered),
 		signed(r.Deviation, formatMwh), deviationRate)
 	fmt.Fprintln(&out, attribution)
 	var notes []string
 	if r.Priced < len(r.Days) {
-		notes = append(notes, fmt.Sprintf("有 %d 天没有实时价（计量记录里没写 rt，也没给 spot=），这些天未计入合计实时均价、电费与节省。", len(r.Days)-r.Priced))
+		notes = append(notes, fmt.Sprintf("有 %d 天没有实时价可用于全天核算，这些天未计入合计实时均价、电费与节省。spot= 只补缺价格的计量记录。", len(r.Days)-r.Priced))
+		if len(r.Unpriced) > 0 {
+			notes = append(notes, "未计价的位置为 "+strings.Join(r.Unpriced, "、")+"。")
+		}
+	}
+	if r.FallbackRows > 0 {
+		notes = append(notes, fmt.Sprintf("按 spot=%s 元/兆瓦时给 %d 条缺价格的计量记录补值。", r.Fallback, r.FallbackRows))
 	}
 	if len(r.LeftOut) > 0 {
 		notes = append(notes, fmt.Sprintf("有 %d 条申报没有计入日前申报（市场不是日前，或没有电量、价格）。", len(r.LeftOut)))
 	}
-	notes = append(notes, "口径：中长期合约与日前申报的电量按各自的价格结算，实际用电与两者之和的差（偏差）按实时价结算；节省 = 全部按实时价结算的电费 − 实际电费。"+
-		"跨多日的合约按天平均分摊；只统计有实际用电记录的日期；售出的合约和申报按负数计。")
+	if len(r.Superseded) > 0 {
+		notes = append(notes, fmt.Sprintf("有 %d 条申报因同一交割日同方向已有日前成交而未计入：%s。", len(r.Superseded), strings.Join(r.Superseded, "、")))
+	}
+	notes = append(notes, "口径：中长期与日前电量按各自的价格计算，偏差按当天电量加权实时价计算。日前优先取同一交割日同方向的成交，缺成交时才以申报量和申报价估算。"+
+		"有交割起止日时按天平均分摊，否则使用成交记录日期。只统计有实际用电记录的日期，售出按负数计。")
 	for _, note := range notes {
 		out.WriteString(note + "\n")
 	}

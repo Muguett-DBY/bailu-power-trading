@@ -566,10 +566,11 @@ func qualityMarkdown(report qualityReport) string {
 }
 
 // checkCommand reads each table and reports what it found.
-func checkCommand(words []string, out io.Writer) error {
+func checkCommand(words []string, out io.Writer, strict bool) error {
 	if len(words) == 0 {
 		return errors.New("bailu check 要给出至少一个电价表、负荷表或曲线文件（CSV、Excel）")
 	}
+	errorsFound := 0
 	for i, word := range words {
 		if _, err := inputOf(word); err != nil {
 			return err
@@ -583,9 +584,14 @@ func checkCommand(words []string, out io.Writer) error {
 				return err
 			}
 		}
-		if _, err := io.WriteString(out, qualityMarkdown(inspectTable(filepath.Base(word), table))+"\n"); err != nil {
+		report := inspectTable(filepath.Base(word), table)
+		errorsFound += report.Errors
+		if _, err := io.WriteString(out, qualityMarkdown(report)+"\n"); err != nil {
 			return err
 		}
+	}
+	if strict && errorsFound > 0 {
+		return fmt.Errorf("严格体检共发现 %d 项错误，详细位置见报告", errorsFound)
 	}
 	return nil
 }

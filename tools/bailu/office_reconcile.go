@@ -46,31 +46,57 @@ var reconcileUnits = map[string]reconcileUnit{
 	"mwh": {"energy", 3}, "兆瓦时": {"energy", 3}, "gwh": {"energy", 6}, "吉瓦时": {"energy", 6},
 }
 
+type reconcileEvidence struct {
+	Source  string `json:"source"`
+	Sheet   string `json:"sheet,omitempty"`
+	Cell    string `json:"cell,omitempty"`
+	Page    int    `json:"page,omitempty"`
+	Formula string `json:"formula,omitempty"`
+}
+
 type reconcileValue struct {
-	Source string          `json:"source"`
-	Sheet  string          `json:"sheet,omitempty"`
-	Cell   string          `json:"cell,omitempty"`
-	Page   int             `json:"page,omitempty"`
-	Raw    string          `json:"raw"`
-	Unit   string          `json:"unit"`
-	Value  decimal.Decimal `json:"normalized"`
+	reconcileEvidence
+	Raw   string          `json:"raw"`
+	Unit  string          `json:"unit"`
+	Value decimal.Decimal `json:"normalized"`
 }
 
 type reconcileRow struct {
-	Source string
-	Values map[string]*reconcileValue
+	Source   string
+	Values   map[string]*reconcileValue
+	Evidence map[string]reconcileEvidence // Known locations of fields with no usable value.
+}
+
+func (row *reconcileRow) addEvidence(field string, evidence reconcileEvidence) {
+	if row.Evidence == nil {
+		row.Evidence = make(map[string]reconcileEvidence)
+	}
+	if _, exists := row.Evidence[field]; !exists {
+		row.Evidence[field] = evidence
+	}
+}
+
+func (row reconcileRow) missingEvidence(field string) *reconcileEvidence {
+	if row.Source == "" {
+		return nil
+	}
+	evidence := row.Evidence[field]
+	evidence.Source = row.Source
+	return &evidence
 }
 
 type reconcileFinding struct {
-	Period    string           `json:"period"`
-	Field     string           `json:"field"`
-	Status    string           `json:"status"`
-	Unit      string           `json:"unit"`
-	Tolerance decimal.Decimal  `json:"tolerance"`
-	Workbook  *reconcileValue  `json:"workbook,omitempty"`
-	PDF       *reconcileValue  `json:"pdf,omitempty"`
-	Delta     *decimal.Decimal `json:"delta_pdf_minus_workbook,omitempty"`
-	Missing   []string         `json:"missing,omitempty"`
+	Period           string             `json:"period"`
+	Field            string             `json:"field"`
+	Status           string             `json:"status"`
+	Unit             string             `json:"unit"`
+	Tolerance        decimal.Decimal    `json:"tolerance"`
+	Workbook         *reconcileValue    `json:"workbook,omitempty"`
+	PDF              *reconcileValue    `json:"pdf,omitempty"`
+	WorkbookEvidence *reconcileEvidence `json:"workbook_evidence,omitempty"`
+	PDFEvidence      *reconcileEvidence `json:"pdf_evidence,omitempty"`
+	Delta            *decimal.Decimal   `json:"delta_pdf_minus_workbook,omitempty"`
+	Missing          []string           `json:"missing,omitempty"`
 }
 
 type reconcileReport struct {
@@ -232,13 +258,18 @@ func compareReconcileRows(workbook, bills map[string]reconcileRow, fields []reco
 			finding := reconcileFinding{Period: period, Field: field.Name, Unit: field.Unit, Tolerance: field.Tolerance,
 				Workbook: workbookRow.Values[field.Name], PDF: billRow.Values[field.Name]}
 			if finding.Workbook == nil {
-				if workbookFound {
-					finding.Missing = append(finding.Missing, "总表字段")
-				} else {
+				finding.WorkbookEvidence = workbookRow.missingEvidence(field.Name)
+				switch {
+				case !workbookFound:
 					finding.Missing = append(finding.Missing, "总表月份")
+				case workbookRow.Evidence[field.Name].Formula != "":
+					finding.Missing = append(finding.Missing, "总表公式无可用缓存")
+				default:
+					finding.Missing = append(finding.Missing, "总表字段")
 				}
 			}
 			if finding.PDF == nil {
+				finding.PDFEvidence = billRow.missingEvidence(field.Name)
 				if billFound {
 					finding.Missing = append(finding.Missing, "账单字段")
 				} else {
@@ -270,7 +301,7 @@ func (report reconcileReport) writeMarkdown(out io.Writer) error {
 		if row.Status == "different" {
 			status = "有差异"
 		} else if row.Status == "missing" {
-			status = "缺" + strings.Join(row.Missing, "、")
+			status = "缺项（" + strings.Join(row.Missing, "、") + "）"
 		}
 		fmt.Fprintf(&output, "- %s %s · %s", row.Period, row.Field, status)
 		if row.Delta != nil {
@@ -279,9 +310,23 @@ func (report reconcileReport) writeMarkdown(out io.Writer) error {
 		output.WriteByte('\n')
 		if row.Workbook != nil {
 			fmt.Fprintf(&output, "  - 总表原值 %q（单位 %s），换算 %s %s（%s，%s!%s）\n", row.Workbook.Raw, row.Workbook.Unit, row.Workbook.Value, row.Unit, row.Workbook.Source, row.Workbook.Sheet, row.Workbook.Cell)
+			if row.Workbook.Formula != "" {
+				fmt.Fprintf(&output, "  - 总表值取自缓存公式 %q\n", row.Workbook.Formula)
+			}
+		} else if evidence := row.WorkbookEvidence; evidence != nil {
+			fmt.Fprintf(&output, "  - 总表位置 %s，%s!%s\n", evidence.Source, evidence.Sheet, evidence.Cell)
+			if evidence.Formula != "" {
+				fmt.Fprintf(&output, "  - 无可用缓存的公式 %q\n", evidence.Formula)
+			}
 		}
 		if row.PDF != nil {
 			fmt.Fprintf(&output, "  - 账单原值 %q（单位 %s），换算 %s %s（%s，第 %d 页）\n", row.PDF.Raw, row.PDF.Unit, row.PDF.Value, row.Unit, row.PDF.Source, row.PDF.Page)
+		} else if evidence := row.PDFEvidence; evidence != nil {
+			fmt.Fprintf(&output, "  - 账单来源 %s", evidence.Source)
+			if evidence.Page > 0 {
+				fmt.Fprintf(&output, "，第 %d 页", evidence.Page)
+			}
+			output.WriteByte('\n')
 		}
 	}
 	_, err := io.WriteString(out, output.String())

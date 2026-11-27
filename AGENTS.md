@@ -10,6 +10,8 @@ English: this file is the rule set for any agent working in a project that has t
 
 `bailu` 自动从当前目录向上找框架；也可以用 `--home <框架目录>` 指明。开始一项工作前可以运行 `bailu selfcheck`，三行都通过说明手册、电价表和计算器就绪。
 
+用户说「更新框架」时，从项目根目录的 `.bailu-install.json` 读取 `framework`，定位框架目录并运行 `python <框架目录>/scripts/bootstrap.py --project <项目根目录> --update`。用户只要求检查时用 `--check-update`。使用 Python 3.10 或更新版本。如果已安装的旧脚本没有这两个选项，先按框架 README「已部署项目升级」从 GitHub 或 Gitee 下载最新版 `bootstrap.py` 到项目内，再运行同一命令。报告实际版本和脚本给出的结果，源码有未提交改动或镜像历史分叉时保留现状并报告原因。
+
 ## 二、铁律
 
 1. **交易数字来自 `bailu` 的输出或用户给定数据。** 用工具做运算，根据原文引用电价、比例、日期和条款编号。
@@ -59,12 +61,12 @@ bailu extract <文件>...                        把 PDF、Word、文本转成�
 ### 数据：`bailu check`、`bailu table`、`bailu risk`
 
 ```
-bailu check <电价表或负荷表>...                 体检：缺值、重复、乱序、缺时段、负电价、离群值
+bailu check <电价表或负荷表>... [--strict]      体检：缺值、重复、乱序、缺时段、负电价、离群值
 bailu table "<问题>" <电价表文件>...            统计或比较电价表（CSV、Excel）
 bailu risk <电价表> [--side buy|sell] [--confidence 95] [--mwh 1200] [--benchmark 400]
 ```
 
-- 表格是交易平台上导出的 CSV 或 Excel，要有时间列和价格列或负荷列。**先 `bailu check` 再用数据**：「错误」会让算出的数字不对，先告诉用户处理；「提醒」请对照来源确认。
+- 表格是交易平台上导出的 CSV 或 Excel，要有时间列和价格列或负荷列。先体检再分析。自动化流程用 `bailu check --strict`；发现「错误」时命令会输出完整报告并返回非零，提醒需要对照来源确认。
 - `bailu table` 回答「哪个月实时均价最高」「比较8月和7月的日前均价」「各时段平均负荷」这类问题。
 - `bailu risk` 给出一段历史价格的分布、分位数、VaR、CVaR、波动、尾部成本和回撤；`--mwh` 是没有避险的电量（兆瓦时），`--side sell` 从售电方看低价风险。这些是对过去的描述，不是预测。
 
@@ -108,7 +110,7 @@ bailu ledger list [种类] [from=日期] [to=日期]
 bailu review [from=日期] [to=日期] [spot=实时价]
 ```
 
-读台账，按天列出实际用电、中长期合约、日前申报、偏差电量和电费，给出中长期覆盖率、合计锁定比例、偏差率，以及比「全部按实时价结算」节省或多花了多少、其中中长期和日前各贡献多少。某天的实时价取计量记录里的「实时均价」，没写时用 `spot=` 给的数；没有实时价的天不算电费。跨多日的合约按天平均分摊。
+读台账，按天列出实际用电、中长期合约、日前持仓、偏差电量和电费，给出覆盖率、偏差率、与全按实时价结算的差异及归因。同日实时均价按计量电量加权，`spot=` 只补缺价记录。仍有有量缺价的日期列入电量合计，电费留待复核。同交割日、同方向有明确日前成交时，以成交计算该方向持仓，其余方向或日期可以用申报估计。跨多日合约按天平均分摊。
 
 ### 精确运算：`bailu compute`
 
@@ -147,3 +149,7 @@ uv run --project analysis analysis/backtest.py <电价表> --load 1000          
 ## 七、回答的样子
 
 先给结论，再分点说明，语言简洁。表格放在结论后面。最后说明依据来自哪些文件或主题。涉及金额、比例的结论，必须是 `bailu` 输出里已有的。用户要文档时，结论和表格用办公技能写成 Word、Excel 或 PPT，数字仍然原样取自工具输出。
+
+## 八、维护框架源码
+
+开发技能仅在框架自己的 `.agents/skills/` 下使用。从源码仓库运行 `npx skills experimental_install --frozen-lockfile --agent codex` 可按 `skills-lock.json` 恢复。Go 测试与检索基准分别用 `golang-testing` 和 `golang-benchmark`，复现问题用 `systematic-debugging`，评估业务技能用 `skill-creator`。Python 依赖用 uv，Windows 脚本用 PowerShell 7。运行时业务技能由 `skills/` 提供。

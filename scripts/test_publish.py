@@ -51,15 +51,37 @@ class PublishTest(unittest.TestCase):
             for path in paths:
                 path.write_bytes(path.name.encode())
             release = {"id": 7, "assets": [{"name": paths[0].name}]}
-            with patch.object(publish, "assets", return_value=paths), patch.object(publish, "run"), patch.object(
-                publish, "gitee_call", return_value=release
-            ) as api:
+            events = []
+
+            def api_call(_token, path, *args, **kwargs):
+                events.append(path)
+                return release
+
+            with patch.object(publish, "assets", return_value=paths), patch.object(
+                publish, "gitee_push", side_effect=lambda ref: events.append(ref)
+            ), patch.object(publish, "gitee_call", side_effect=api_call) as api:
                 publish.gitee("v0.0.1", "commit", "token")
             uploads = api.call_args_list[1:]
             self.assertEqual(len(uploads), 2)
             self.assertTrue(all(call.args[1] == "/releases/7/attach_files" for call in uploads))
             self.assertCountEqual([call.args[2].split(b'filename="')[1].split(b'"')[0] for call in uploads],
                                   [b"missing.zip", b"SHA256SUMS"])
+            self.assertEqual(events[0], "refs/tags/v0.0.1")
+            self.assertEqual(events[-1], "commit:refs/heads/main")
+
+    def test_gitee_releases_exact_commit_without_advancing_main_on_upload_failure(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            payload = Path(temporary) / "binary.zip"
+            payload.write_bytes(b"archive")
+            replies = [None, {"id": 7}, SystemExit("attach failed")]
+            with patch.object(publish, "assets", return_value=[payload]), patch.object(publish, "gitee_push") as push, patch.object(
+                publish, "gitee_call", side_effect=replies
+            ) as api, patch.object(publish, "OUT", Path(temporary)):
+                (Path(temporary) / "notes.md").write_text("Release notes", encoding="utf-8")
+                with self.assertRaisesRegex(SystemExit, "attach failed"):
+                    publish.gitee("v0.0.1", "prepared-commit", "token")
+            push.assert_called_once_with("refs/tags/v0.0.1")
+            self.assertEqual(json.loads(api.call_args_list[1].args[2])["target_commitish"], "prepared-commit")
 
 
 if __name__ == "__main__":

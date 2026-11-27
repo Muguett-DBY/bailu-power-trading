@@ -35,7 +35,7 @@ import zipfile
 from pathlib import Path
 
 FRAMEWORK = Path(__file__).resolve().parent.parent
-VERSION = "0.3.0"
+VERSION = "0.3.1"
 # The default order for a direct install. The bootstrap prefers the mirror
 # that served the source, and leaves the other mirror and CDN as fallbacks.
 # {file} is the name of what is fetched: the archive, or SHA256SUMS beside it.

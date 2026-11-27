@@ -21,11 +21,12 @@ import (
 	"path/filepath"
 	"regexp"
 	"slices"
+	"strconv"
 	"strings"
 	"time"
 )
 
-const version = "0.3.0"
+const version = "0.3.1"
 
 const usage = `bailu ` + version + ` — 电力交易框架的工具。数字由程序算，条文出自原文。
 
@@ -55,7 +56,7 @@ const usage = `bailu ` + version + ` — 电力交易框架的工具。数字由
   bailu extract <文件>...             把政策文件（PDF、Word、文本）转成纯文本
   bailu reconcile 总表.xlsx 账单.pdf... --spec 对账配置.json [--format markdown|json]
                                       逐月核对字段并保留单元格和页码
-  bailu check <表格文件>...           体检电价表、负荷表：缺值、重复、乱序、缺时段、离群值
+  bailu check <表格文件>... [--strict]  体检电价和负荷表，严格模式在查到错误时返回非零
   bailu curve <曲线文件> [选项]        校验申报曲线、报价曲线、储能充放电曲线
       --min --max 兆瓦   --ramp 每点爬坡（兆瓦）   --step 申报步长（兆瓦）
       报价曲线：--price-min --price-max 元/兆瓦时   --side buy|sell
@@ -115,6 +116,9 @@ func parse(args []string) (options, error) {
 			if name == "-V" || name == "--version" {
 				o.version = true
 				continue
+			}
+			if name == "--strict" && !hasValue {
+				value, hasValue = "true", true
 			}
 			if !hasValue {
 				if i+1 >= len(args) {
@@ -195,10 +199,14 @@ func run(args []string, out io.Writer) error {
 	case "reconcile":
 		return reconcileCommand(o, out)
 	case "check":
-		if err := o.only(); err != nil {
+		if err := o.only("strict"); err != nil {
 			return err
 		}
-		return checkCommand(o.words, out)
+		strict, err := strconv.ParseBool(o.flag("strict", "false"))
+		if err != nil {
+			return fmt.Errorf("--strict 只接受布尔值")
+		}
+		return checkCommand(o.words, out, strict)
 	case "risk":
 		return riskCommand(o, out)
 	case "curve":

@@ -41,11 +41,22 @@ def load_report(path, from_reconcile=False):
     return report
 
 
-def evidence(value):
-    if not value:
+def evidence(value, location):
+    source = value or location
+    if not source:
         return ""
-    location = f"{value['sheet']}!{value['cell']}" if value.get("sheet") else f"第 {value['page']} 页"
-    return f"{value['normalized']}\n{value['source']} · {location}\n原值 {value['raw']} {value['unit']}"
+    address = source["source"]
+    if source.get("sheet"):
+        address += f" · {source['sheet']}!{source['cell']}"
+    elif source.get("page"):
+        address += f" · 第 {source['page']} 页"
+    text = [address]
+    if value:
+        text = [str(value["normalized"]), address, f"原值 {value['raw']} {value['unit']}"]
+    if source.get("formula"):
+        label = "公式（使用文件内缓存）" if value else "公式（无可用缓存）"
+        text.append(f"{label} {source['formula']}")
+    return "\n".join(text)
 
 
 def settlement_report(data):
@@ -55,14 +66,16 @@ def settlement_report(data):
         period, field = finding["period"], finding["field"]
         status, unit = finding["status"], finding["unit"]
         workbook, pdf = finding.get("workbook"), finding.get("pdf")
+        workbook_location, pdf_location = finding.get("workbook_evidence"), finding.get("pdf_evidence")
         delta = finding.get("delta_pdf_minus_workbook", "")
         tolerance = finding["tolerance"]
         missing = "、".join(finding.get("missing", []))
         note = f"差额 {delta} {unit}，容差 {tolerance} {unit}" if status == "different" else missing
         if status != "match":
             notes.append(f"{period} · {field} · {labels[status]} · {note}")
-        rows.append([period, f"{field}（{unit}）", labels[status], evidence(workbook), evidence(pdf), delta, tolerance, missing])
-        for value in (workbook, pdf):
+        rows.append([period, f"{field}（{unit}）", labels[status], evidence(workbook, workbook_location),
+                     evidence(pdf, pdf_location), delta, tolerance, missing])
+        for value in (workbook or workbook_location, pdf or pdf_location):
             if value:
                 sources[value["source"]] = None
     counts = data["summary"]

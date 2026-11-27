@@ -31,11 +31,13 @@
 
 ## 已部署项目升级
 
+安装后在项目对话里说 **「更新框架」** 即可请求升级。说「检查框架更新」可只查看可用版本。
+
 ```text
 请用最新版 Bailu bootstrap.py 更新当前项目里已有的 Bailu 框架。把脚本下载到项目内的临时文件，先试 https://raw.githubusercontent.com/Muguett-DBY/bailu-power-trading/main/scripts/bootstrap.py ，失败、超时或收到网页时换 https://gitee.com/Muguett/bailu-power-trading/raw/main/scripts/bootstrap.py 。每次下载限 15 秒。用 Python 3.10+ 传入 --project 当前项目绝对路径以及 --check-update，确认有可用更新后再用同一脚本传 --update。报告版本、所用镜像、验收与备份路径。保留我改过的技能和项目文件。
 ```
 
-已安装 v0.3.0 或更新版时，也可以在框架目录运行 `python scripts/bootstrap.py --project <项目根目录> --check-update` 或把最后一个参数换成 `--update`。脚本默认优先使用此前部署的镜像，失败时换另一家。升级先在临时工作树校验工具和知识库，再快进应用。部署文件的备份放在框架目录下的 `.bailu/update-backups/`，更新发生错误时恢复原部署。框架源码有未提交改动或与公开历史分叉时，先处理 Git 碰撞再升级。
+已安装 v0.3.0 或更新版时，也可以在框架目录运行 `python scripts/bootstrap.py --project <项目根目录> --check-update`，应用更新时把最后一个参数换成 `--update`。v0.3.1 的脚本会比较公开镜像可用的提交，两边一致时优先此前部署的镜像，历史分叉时报告两边提交。升级先在临时工作树校验工具和知识库，再快进应用。部署文件的备份位于框架目录下的 `.bailu/update-backups/`，应用失败时恢复原部署。
 
 ## 能做什么
 
@@ -111,7 +113,7 @@ LICENSE  NOTICE.md     MIT；第三方声明
 | `bailu policy show <文档ID> ["<问题>"]` | 按目录命中 ID 查看镜像来源与正文，带问题时只返回相关摘录 |
 | `bailu policy official 1656 --as-of 2026-03-01` | 按地区和类目查询版本事实，查看指定交易日的状态 |
 | `bailu reconcile 总表.xlsx 账单.pdf... --spec 对账配置.json` | 核对文字版月度账单，支持 `--format json` 导出证据和差额 |
-| `bailu check <表格文件>...` | 体检电价表、负荷表：缺值、重复、乱序、缺时段、负电价、离群值 |
+| `bailu check <表格文件>... [--strict]` | 体检电价、负荷表。严格模式发现错误时返回非零并输出报告 |
 | `bailu table "<问题>" <电价表文件>...` | 统计或比较电价表（CSV、Excel） |
 | `bailu risk <电价表> [--mwh 1200]` | 风险指标：分位数、VaR、CVaR、波动、尾部成本、回撤 |
 | `bailu curve <曲线文件> [选项]` | 校验申报曲线、报价曲线、储能充放电曲线 |
@@ -139,6 +141,8 @@ LICENSE  NOTICE.md     MIT；第三方声明
 
 ## 测试情况
 
+v0.3.1 覆盖双镜像选版、交易复盘及公式证据。同日计量按电量加权，日前成交与同方向申报只计一次。对账区分业务数据缺失和公式无可用缓存。发布流程运行 Go、部署、办公与分析测试。
+
 v0.3.0 增加了升级、跨文件对账、政策版本与交付件复读测试。升级覆盖镜像失败回退、先验收再更新以及本地技能保护。对账测试覆盖 PDF 页码、Excel 格位、单位换算、容差、缺项和歧义。办公层测试见[运行方法](office/README.md)。
 
 **部署测试**覆盖源码克隆超时后切换镜像、工具下载失败或校验不符后的切换、二次部署、卸载保留用户修改，以及技能目录的项目边界。用 `python -m unittest discover -s scripts -p "test_*.py"` 复跑。
@@ -160,3 +164,5 @@ MIT，见 [LICENSE](LICENSE)。上游技能、改写自的代码和参考过的�
 - [energy-skills](https://github.com/Weisg1999/energy-skills)（CC BY-NC 4.0）和 [electric](https://github.com/mechanic-Q/electric) 只作过选题思路的参考，没有收入它们的文字、脚本或数据。
 
 办公脚本用 openpyxl、python-docx、python-pptx 和 pypdf，依赖锁定在 `office/uv.lock`。复杂模板、OCR、渲染或公式重算按对应 `SKILL.md` 选用工具，例如 LibreOffice 和 Tesseract。分析与办公依赖各自在项目级 `.venv` 中。
+
+维护框架时，在源码根目录运行 `npx skills experimental_install --frozen-lockfile --agent codex`，可恢复 `skills-lock.json` 固定的开发技能到 `.agents/skills/`。技术取舍和后续验收目标见[工作流覆盖](docs/workflow-coverage.md)。

@@ -114,3 +114,71 @@ func TestReconcilePDFRejectsAmbiguousSources(t *testing.T) {
 		t.Fatalf("unexpected Chinese number recognition: %s %s (%v)", unit, quantity, err)
 	}
 }
+
+func TestReconcilePreservesFormulaAndMissingEvidence(t *testing.T) {
+	dir := t.TempDir()
+	workbookPath := filepath.Join(dir, "汇总.xlsx")
+	book := excelize.NewFile()
+	t.Cleanup(func() { _ = book.Close() })
+	for _, err := range []error{
+		book.SetSheetName("Sheet1", "汇总"),
+		book.SetSheetRow("汇总", "A2", &[]any{"月份", "购电电量", "收益"}),
+		book.SetSheetRow("汇总", "A3", &[]any{"2025-01", 15}),
+		book.SetCellFormula("汇总", "B3", "10+5"), // SetCellFormula retains the existing numeric cache.
+		book.SetCellFormula("汇总", "C3", "30+20"),
+		book.SetCellValue("汇总", "A4", "2025-02"),
+		book.MergeCell("汇总", "B3", "B4"), // The anchor's cached value belongs only to B3.
+		book.SaveAs(workbookPath),
+	} {
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	specPath := filepath.Join(dir, "配置.json")
+	if err := os.WriteFile(specPath, []byte(officeTestSpec), 0600); err != nil {
+		t.Fatal(err)
+	}
+	january := filepath.Join(dir, "January.pdf")
+	february := filepath.Join(dir, "February.pdf")
+	writeTestPDF(t, january, "Month: 2025-01", "Energy: 15000", "Revenue: 0.005")
+	writeTestPDF(t, february, "Month: 2025-02", "Energy: -")
+	args := []string{"reconcile", workbookPath, january, february, "--spec", specPath}
+	var out bytes.Buffer
+	if err := run(append(args, "--format", "json"), &out); err != nil {
+		t.Fatal(err)
+	}
+	var report struct {
+		Findings []struct {
+			Status           string         `json:"status"`
+			Missing          []string       `json:"missing"`
+			Workbook         map[string]any `json:"workbook"`
+			WorkbookEvidence map[string]any `json:"workbook_evidence"`
+			PDFEvidence      map[string]any `json:"pdf_evidence"`
+		} `json:"findings"`
+	}
+	if err := json.Unmarshal(out.Bytes(), &report); err != nil || len(report.Findings) != 4 {
+		t.Fatalf("unexpected report: %s (%v)", out.Bytes(), err)
+	}
+	cached, unresolved := report.Findings[0], report.Findings[1]
+	if cached.Status != "match" || cached.Workbook["normalized"] != "15" || cached.Workbook["formula"] != "=10+5" {
+		t.Fatalf("cached formula lost: %s", out.Bytes())
+	}
+	if unresolved.Status != "missing" || unresolved.Workbook != nil ||
+		strings.Join(unresolved.Missing, ",") != "总表公式无可用缓存" ||
+		unresolved.WorkbookEvidence["formula"] != "=30+20" || unresolved.WorkbookEvidence["cell"] != "C3" ||
+		unresolved.WorkbookEvidence["sheet"] != "汇总" || unresolved.WorkbookEvidence["source"] != workbookPath {
+		t.Fatalf("uncached formula was not distinguished: %s", out.Bytes())
+	}
+	blanks, absent := report.Findings[2], report.Findings[3]
+	if strings.Join(blanks.Missing, ",") != "总表字段,账单字段" || blanks.WorkbookEvidence["cell"] != "B4" ||
+		blanks.WorkbookEvidence["formula"] != nil ||
+		blanks.PDFEvidence["source"] != february || blanks.PDFEvidence["page"] != float64(2) ||
+		absent.PDFEvidence["source"] != february || absent.PDFEvidence["page"] != nil {
+		t.Fatalf("missing position not retained: %s", out.Bytes())
+	}
+	out.Reset()
+	if err := run(args, &out); err != nil || !strings.Contains(out.String(), "总表公式无可用缓存") ||
+		!strings.Contains(out.String(), "缓存公式") || !strings.Contains(out.String(), "汇总!C3") {
+		t.Fatalf("markdown evidence missing: %s (%v)", out.String(), err)
+	}
+}

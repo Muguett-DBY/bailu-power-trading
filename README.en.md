@@ -33,6 +33,8 @@ Uninstall: run `python scripts/deploy.py --uninstall` in the framework folder. I
 
 ## Update an existing project
 
+Ask your agent to “update the framework” from the deployed project, or say “check for framework updates” to check only.
+
 ```text
 Update the Bailu framework already deployed in the current project. Download the latest bootstrap.py to a temporary file inside this project from https://raw.githubusercontent.com/Muguett-DBY/bailu-power-trading/main/scripts/bootstrap.py . If that fails or returns a web page, use https://gitee.com/Muguett/bailu-power-trading/raw/main/scripts/bootstrap.py . Limit each download to 15 seconds. Run it with Python 3.10+ and --project <absolute project path> --check-update. If it finds an update, run the same script and use --update. Report the version, mirror, checks and backup path. Keep my edited skills and project files.
 ```
@@ -101,7 +103,7 @@ LICENSE  NOTICE.md     MIT; notices of third-party work
 | `bailu docs <folder or file> "<question>"` | Finds provisions in policy documents, bills, the document library |
 | `bailu policy official 1656 --as-of 2026-03-01` | Looks up checked version evidence for a date |
 | `bailu reconcile summary.xlsx bills.pdf... --spec mapping.json` | Reconciles monthly, text-based PDF bills with a workbook. Use `--format json` to export the results |
-| `bailu check <table>...` | What is wrong with a price or load table: empty cells, repeats, disorder, missing intervals, negative prices, outliers |
+| `bailu check <table>... [--strict]` | Validate a price or load table. Strict mode exits nonzero on errors after printing the report |
 | `bailu table "<question>" <table>...` | Statistics of and comparisons between price tables (CSV, Excel) |
 | `bailu risk <table> [--mwh 1200]` | Risk: quantiles, VaR, CVaR, volatility, cost of the tail, drawdown |
 | `bailu curve <curve> [options]` | A declaration, a bid or a battery plan against its limits |
@@ -127,6 +129,8 @@ Run `python scripts/knowledge_coverage.py` for a regional inventory of the ECNot
 To add to or update the handbook, the pipeline is in `scripts/`: `fetch_cited_sources.py` downloads the official pages cited → `go test` in `tools/bailu/` with `BAILU_VERIFY_STAGING=1` checks each quote of the drafts word for word → `overlap.py` finds overlaps → `merge_knowledge.py` merges → `build_documents.py` rebuilds the library. The drafts are in `docs/research/handbook/`; how to write one is in `docs/research/RULES.md` (Chinese).
 
 ## What was tested
+
+v0.3.1 adds coverage for comparing mirror revisions, volume-weighted metering, confirmed day-ahead fills, strict data validation, and the source and cache state of settlement formulas.
 
 v0.3.0 adds tests for mirror failover and upgrades, exact cross-file reconciliation, policy version transitions and reading the generated office files back. See the [office test commands](office/README.md).
 

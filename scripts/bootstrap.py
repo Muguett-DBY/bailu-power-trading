@@ -8,6 +8,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from uuid import uuid4
 
@@ -17,6 +18,7 @@ MIRRORS = {
 }
 REQUIRED = ("AGENTS.md", "scripts/deploy.py", "knowledge/ecnote/index.json")
 CLONE_TIMEOUT = 120
+MIRROR_PROBE_TIMEOUT = 20
 MANIFEST = ".bailu-install.json"
 VERIFIED_TOOL_ORIGIN = "BAILU_UPDATE_TOOL_ORIGIN"
 GIT_NETWORK = ["git", "-c", "credential.helper=", "-c", "core.askPass=", "-c", "http.lowSpeedLimit=1024",
@@ -116,38 +118,84 @@ def deploy_and_check(project: Path, source: Path, mirror: str, directories: list
     return record
 
 
+def mirror_tip(source: Path, name: str) -> tuple[str, str]:
+    command = [*GIT_NETWORK, "ls-remote", "--exit-code", "--refs", MIRRORS[name], "refs/heads/main"]
+    try:
+        result = subprocess.run(command, cwd=source, env=network_env(), capture_output=True, text=True,
+                                encoding="utf-8", errors="replace", timeout=MIRROR_PROBE_TIMEOUT)
+    except subprocess.TimeoutExpired:
+        return "", f"{name} 查询分支超时"
+    if result.returncode:
+        detail = result.stderr.strip()[-600:]
+        return "", f"{name} 查询分支失败" + (f"。{detail}" if detail else "。没有可用的 main 分支。")
+    return result.stdout.strip().split("\t", 1)[0], ""
+
+
+def is_ancestor(source: Path, previous: str, later: str) -> bool:
+    return local_git(source, "merge-base", "--is-ancestor", previous, later).returncode == 0
+
+
 def update_candidate(source: Path, current: str, preferred: str, log_path: Path) -> tuple[str, str] | None:
+    # Probe both tips without downloading history. Fetches share a worktree and
+    # may need to remove its shallow boundary, so keep those sequential.
+    order = mirror_order(preferred)
+    with ThreadPoolExecutor(max_workers=len(order)) as pool:
+        probes = [pool.submit(mirror_tip, source, name) for name in order]
+    mirrored_tips = {name: result.result() for name, result in zip(order, probes)}
     ref = "refs/bailu/update-" + uuid4().hex
     errors = []
     unchanged = False
+    selected = None
     try:
-        for name in mirror_order(preferred):
-            options = ["--unshallow"] if local_git(source, "rev-parse", "--is-shallow-repository").stdout.strip() == "true" else []
-            command = [*GIT_NETWORK, "fetch", "--no-tags", "--no-write-fetch-head", "--no-recurse-submodules",
-                       *options, MIRRORS[name], f"+refs/heads/main:{ref}"]
-            with log_path.open("w+b") as log:
-                try:
-                    fetch = subprocess.run(command, cwd=source, env=network_env(), stdout=log, stderr=log, timeout=CLONE_TIMEOUT)
-                except subprocess.TimeoutExpired:
-                    errors.append(f"{name} 取回超时")
-                    continue
-                if fetch.returncode:
-                    log.seek(0)
-                    errors.append(f"{name} 取回失败。{log.read().decode('utf-8', errors='replace').strip()[-600:]}")
-                    continue
-            tip = local_git(source, "rev-parse", "--verify", ref).stdout.strip()
+        for name, (tip, error) in mirrored_tips.items():
+            if error:
+                errors.append(error)
+                continue
             if tip == current:
                 unchanged = True
-            elif tip and local_git(source, "merge-base", "--is-ancestor", current, tip).returncode == 0:
-                return tip, name
-            else:
+                continue
+            fast_forward = is_ancestor(source, current, tip)
+            if not fast_forward:
+                shallow = local_git(source, "rev-parse", "--is-shallow-repository").stdout.strip() == "true"
+                options = ["--unshallow"] if shallow else []
+                command = [*GIT_NETWORK, "fetch", "--no-tags", "--no-write-fetch-head", "--no-recurse-submodules",
+                           *options, MIRRORS[name], f"+refs/heads/main:{ref}"]
+                with log_path.open("w+b") as log:
+                    try:
+                        fetch = subprocess.run(command, cwd=source, env=network_env(), stdout=log, stderr=log,
+                                               timeout=CLONE_TIMEOUT)
+                    except subprocess.TimeoutExpired:
+                        errors.append(f"{name} 取回超时")
+                        continue
+                    if fetch.returncode:
+                        log.seek(0)
+                        errors.append(f"{name} 取回失败。{log.read().decode('utf-8', errors='replace').strip()[-600:]}")
+                        continue
+                tip = local_git(source, "rev-parse", "--verify", ref).stdout.strip()
+                if tip == current:
+                    unchanged = True
+                    continue
+                fast_forward = is_ancestor(source, current, tip)
+            if not fast_forward:
                 errors.append(f"{name} 的分支无法从本地 {current[:12]} 快进到 {tip[:12]}")
+                continue
+            if selected is None:
+                selected = tip, name
+                continue
+            previous_tip, previous_name = selected
+            if previous_tip == tip:
+                continue
+            if is_ancestor(source, previous_tip, tip):
+                selected = tip, name
+            elif not is_ancestor(source, tip, previous_tip):
+                raise SystemExit(f"两个镜像都可从本地快进，但版本历史分叉：{previous_name} {previous_tip[:12]}、"
+                                 f"{name} {tip[:12]}。镜像历史一致后再升级。")
     finally:
         local_git(source, "update-ref", "-d", ref)
-    if unchanged:
+    if selected is not None or unchanged:
         for error in errors:
             print(error)
-        return None
+        return selected
     raise SystemExit("没有可安全快进的公开镜像。\n" + "\n".join(errors))
 
 

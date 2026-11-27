@@ -89,6 +89,49 @@ class UpdateTest(unittest.TestCase):
         self.assertEqual(self.binary.read_bytes(), b"previous binary")
         self.assertEqual(self.git(self.checkout, "for-each-ref", "refs/bailu"), "")
 
+    def test_comparable_mirrors_choose_newer_commit_even_when_preferred_is_ahead(self):
+        older = self.remote.parent / "older"
+        self.git(self.project, "clone", self.mirrors["gitee"], str(older))
+        self.mirrors["github"] = older.as_uri()
+        self.write(self.remote / "knowledge/handbook/entry.md", b"updated handbook\n")
+        newest = self.commit("newest version")
+        with tempfile.TemporaryDirectory() as stage:
+            log = Path(stage) / "git.log"
+            self.assertEqual(bootstrap.update_candidate(self.checkout, self.old, "github", log), (newest, "gitee"))
+            self.assertEqual(bootstrap.update_candidate(self.checkout, self.old, "gitee", log), (newest, "gitee"))
+
+    def test_equal_mirrors_keep_shallow_checkout_when_current_and_prefer_requested_mirror(self):
+        same = self.remote.parent / "same"
+        self.git(self.project, "clone", self.mirrors["gitee"], str(same))
+        self.git(same, "reset", "--hard", self.old)
+        self.git(self.remote, "reset", "--hard", self.old)
+        self.mirrors["github"] = same.as_uri()
+        with tempfile.TemporaryDirectory() as stage:
+            log = Path(stage) / "git.log"
+            self.assertIsNone(bootstrap.update_candidate(self.checkout, self.old, "github", log))
+            self.assertFalse(log.exists())
+            self.assertEqual(self.git(self.checkout, "rev-parse", "--is-shallow-repository"), "true")
+            self.git(same, "reset", "--hard", self.new)
+            self.git(self.remote, "reset", "--hard", self.new)
+            self.assertEqual(bootstrap.update_candidate(self.checkout, self.old, "github", log), (self.new, "github"))
+
+    def test_incomparable_updates_refuse_to_choose_either_mirror(self):
+        divergent = self.remote.parent / "divergent"
+        self.git(self.project, "clone", self.mirrors["gitee"], str(divergent))
+        self.git(divergent, "reset", "--hard", self.old)
+        self.write(divergent / "knowledge/handbook/entry.md", b"different next version\n")
+        self.git(divergent, "add", ".")
+        self.git(divergent, "-c", "user.name=Bailu test", "-c", "user.email=bailu-test@example.invalid", "-c",
+                 "commit.gpgsign=false", "commit", "-m", "divergent version")
+        other = self.git(divergent, "rev-parse", "HEAD")
+        self.mirrors["github"] = divergent.as_uri()
+        with self.assertRaises(SystemExit) as error:
+            self.run_update(check_only=True)
+        self.assertIn(f"github {other[:12]}", str(error.exception))
+        self.assertIn(f"gitee {self.new[:12]}", str(error.exception))
+        self.assertEqual(self.git(self.checkout, "rev-parse", "HEAD"), self.old)
+        self.assertEqual(self.manifest.read_bytes(), self.old_manifest)
+
     def test_upgrade_preflights_and_preserves_local_files(self):
         def deploy(project, source, mirror, directories, *, no_skills, tool_origin=""):
             self.assertEqual(mirror, "gitee")

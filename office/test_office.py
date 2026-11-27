@@ -33,6 +33,29 @@ class OfficeTest(unittest.TestCase):
             ])
             self.assertEqual(read_file.excel(exported, 4, 3, None)["rows"], [])
 
+    def test_excel_formula_cache_distinguishes_zero_missing_and_formula_like_text(self):
+        with tempfile.TemporaryDirectory() as temp:
+            original = Path(temp) / "original.xlsx"
+            exported = Path(temp) / "summary.xlsx"
+            book = Workbook()
+            book.active["A2"] = "=1+1"
+            book.active["B2"] = "=1-1"
+            book.active["C2"] = "=2-2"
+            book.active["C2"].data_type = "s"
+            book.save(original)
+            with ZipFile(original) as source, ZipFile(exported, "w") as target:
+                for name in source.namelist():
+                    data = source.read(name)
+                    if name == "xl/worksheets/sheet1.xml":
+                        data = data.replace(b"<f>1-1</f><v></v>", b"<f>1-1</f><v>0</v>")
+                    target.writestr(name, data)
+            result = read_file.excel(exported, 2, 1, None, include_formula_cache=True)
+            self.assertEqual(result["rows"], [{"row": 2, "cells": ["=1+1", "=1-1", "=2-2"]}])
+            self.assertEqual(result["formulas"], [
+                {"cell": "A2", "formula": "=1+1", "cached_value": None, "cache_status": "missing"},
+                {"cell": "B2", "formula": "=1-1", "cached_value": 0, "cache_status": "available"},
+            ])
+
     def test_one_source_three_outputs(self):
         with tempfile.TemporaryDirectory() as temp:
             base = Path(temp) / "2026.11结算"
@@ -61,17 +84,24 @@ class OfficeTest(unittest.TestCase):
     def test_reconcile_representation_keeps_locations_and_deltas(self):
         data = json.loads('''{"summary":{"different":1,"missing":1},"findings":[
             {"period":"2026-10","field":"电量","status":"different","unit":"MWh","tolerance":"0.01",
-             "workbook":{"source":"总表.xlsx","sheet":"月度","cell":"B2","normalized":"67.1023","raw":"67.1023","unit":"MWh"},
+             "workbook":{"source":"总表.xlsx","sheet":"月度","cell":"B2","normalized":"67.1023","raw":"67.1023","unit":"MWh","formula":"=SUM(C2:D2)"},
              "pdf":{"source":"十月.pdf","page":3,"normalized":"67.001","raw":"67001","unit":"kWh"},
              "delta_pdf_minus_workbook":"-0.1013"},
-            {"period":"2026-11","field":"电量","status":"missing","unit":"MWh","tolerance":"0.01","missing":["账单缺失"]}]}''')
+            {"period":"2026-11","field":"电量","status":"missing","unit":"MWh","tolerance":"0.01",
+             "workbook_evidence":{"source":"总表.xlsx","sheet":"月度","cell":"B3","formula":"=SUM(C3:D3)"},
+             "pdf_evidence":{"source":"十一月.pdf"},"missing":["总表公式无可用缓存","账单缺失"]}]}''')
         report = settlement_report(data)
         self.assertEqual(report["summary"], ["一致 0 项", "超差 1 项", "缺项 1 项"])
         first, second = report["tables"][0]["rows"]
         self.assertIn("月度!B2", first[3])
+        self.assertIn("公式（使用文件内缓存） =SUM(C2:D2)", first[3])
         self.assertIn("十月.pdf · 第 3 页", first[4])
         self.assertEqual(first[5], "-0.1013")
-        self.assertEqual(second[-1], "账单缺失")
+        self.assertIn("月度!B3", second[3])
+        self.assertIn("公式（无可用缓存） =SUM(C3:D3)", second[3])
+        self.assertEqual(second[4], "十一月.pdf")
+        self.assertEqual(second[-1], "总表公式无可用缓存、账单缺失")
+        self.assertIn("十一月.pdf", report["sources"])
 
     def test_pdf_page_window_reports_empty_text(self):
         with tempfile.TemporaryDirectory() as temp:

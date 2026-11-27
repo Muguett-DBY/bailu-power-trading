@@ -109,15 +109,6 @@ func searchPolicies(root *os.Root, records []policyRecord, o options, verified m
 			status != "" && record.Status != status || before != "" && (record.Date == "" || record.Date > before) {
 			continue
 		}
-		if phrase != "" {
-			_, body, err := readPolicy(root, record.ID)
-			if err != nil {
-				return err
-			}
-			if !strings.Contains(body, phrase) {
-				continue
-			}
-		}
 		candidates = append(candidates, record)
 	}
 	slices.SortFunc(candidates, func(left, right policyRecord) int {
@@ -126,6 +117,23 @@ func searchPolicies(root *os.Root, records []policyRecord, o options, verified m
 		}
 		return strings.Compare(left.ID, right.ID)
 	})
+	if phrase != "" {
+		filtered := candidates[:0]
+		for _, record := range candidates {
+			_, body, err := readPolicy(root, record.ID)
+			if err != nil {
+				return err
+			}
+			if strings.Contains(body, phrase) {
+				filtered = append(filtered, record)
+				// With no ranking query the matching documents are already in result order.
+				if query == "" && len(filtered) == limit {
+					break
+				}
+			}
+		}
+		candidates = filtered
+	}
 	if query != "" {
 		var exact, remaining []policyRecord
 		for _, record := range candidates {

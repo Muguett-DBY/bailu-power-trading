@@ -2,7 +2,7 @@
 
     python scripts/publish.py v0.2.1
 
-Needs git, Go, the GitHub command line tool (signed in) and, for the mirror,
+Needs git, Go, uv, the GitHub command line tool (signed in) and, for the mirror,
 the variable GITEE_TOKEN with a personal access token of the Gitee account
 (scopes user_info and projects). Everything it makes goes to the releases of
 the two repositories and to the branch `dist`, which holds nothing but the
@@ -188,22 +188,25 @@ def gitee_call(token: str, path: str, data: bytes | None = None, content_type: s
         raise SystemExit(f"Gitee did not take {path}: {error.code} {detail}")
 
 
-def gitee(version: str, commit: str, token: str) -> None:
+def gitee_push(*refspecs: str) -> None:
     # The token is given to this one push in a helper, so that it is not kept.
     # The empty value before it clears the helpers set on the machine: one of
     # them may ask for an account in a window of its own, and keep what it is
     # given in the credential store.
     helper = "!f() { echo username=Muguett; echo password=$GITEE_TOKEN; }; f"
     run("git", "-c", "credential.helper=", "-c", f"credential.helper={helper}", "push", GITEE + ".git",
-        f"{commit}:refs/heads/main", f"refs/tags/{version}",
-        env={"GIT_TERMINAL_PROMPT": "0", "GCM_INTERACTIVE": "never"})
+        *refspecs, env={"GIT_TERMINAL_PROMPT": "0", "GCM_INTERACTIVE": "never"})
+
+
+def gitee(version: str, commit: str, token: str) -> None:
+    gitee_push(f"refs/tags/{version}")
     # The release is made once, and an attachment that is there already is left
     # alone: a run that broke off is finished by running it again.
     release = gitee_call(token, f"/releases/tags/{version}", allow_missing=True)
     if release is None:
         release = gitee_call(token, "/releases", json.dumps({"tag_name": version, "name": f"bailu {version}",
                                                            "body": (OUT / "notes.md").read_text(encoding="utf-8"),
-                                                           "target_commitish": "main"}).encode())
+                                                           "target_commitish": commit}).encode())
     attached = {one["name"] for one in release.get("assets", [])}
 
     def attach(path):
@@ -216,6 +219,7 @@ def gitee(version: str, commit: str, token: str) -> None:
     with ThreadPoolExecutor(max_workers=3) as uploads:
         # Each attachment is a separate request. Wait for all and surface upload failures.
         list(uploads.map(attach, [path for path in assets() if path.name not in attached]))
+    gitee_push(f"{commit}:refs/heads/main")
 
 
 def main() -> None:
@@ -232,6 +236,9 @@ def main() -> None:
         raise SystemExit("commit the changes first")
     run("go", "test", "./...", cwd=TOOL, env={"GOFLAGS": "-p=4"})
     run(sys.executable, "-m", "unittest", "discover", "-s", "scripts", "-p", "test_*.py")
+    for project in ("office", "analysis"):
+        run("uv", "run", "--project", project, "--locked", "--cache-dir", ".cache/uv", "python",
+            "-m", "unittest", "discover", "-s", project)
     archives = build(version[1:])
     commit = ensure_tag(version)
     run("git", "push", GITHUB + ".git", f"refs/tags/{version}")
