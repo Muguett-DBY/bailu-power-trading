@@ -266,10 +266,14 @@ def resume_checkout(project: Path, source: Path, preferred: str) -> str:
     return mirror
 
 
-def update(project: Path, preferred: str | None, directories: list[str], check_only: bool) -> None:
+def update(project: Path, preferred: str | None, directories: list[str], check_only: bool, *, no_tool=False) -> None:
     if not (project / MANIFEST).is_file():
         raise SystemExit("当前目录没有部署记录。请先运行 bootstrap.py 安装框架。")
     record = install_record(project)
+    has_tool = bool(record.get("tool"))
+    if no_tool and has_tool and not check_only:
+        raise SystemExit("当前部署已安装 bailu。请用 --update 升级工具、技能和知识库。")
+    source_only = no_tool or (not has_tool and record.get("toolStatus", TOOL_NOT_INSTALLED) == TOOL_NOT_INSTALLED)
     source = project_path(project, record.get("framework", "."))
     origin = origin_mirror(source) if source.is_dir() else ""
     root = local_git(source, "rev-parse", "--show-toplevel") if origin else None
@@ -298,22 +302,29 @@ def update(project: Path, preferred: str | None, directories: list[str], check_o
         try:
             if not complete_checkout(preview):
                 raise SystemExit("新版本缺少部署所需的知识库或脚本。")
-            exe = "bailu.exe" if sys.platform == "win32" else "bailu"
-            binary = source / ".bailu" / "bin" / exe
-            cached = project_path(project, record.get("tool", "")) if record.get("tool") else None
-            preview_binary = preview / ".bailu" / "bin" / exe
-            if cached and cached.is_file():
-                preview_binary.parent.mkdir(parents=True)
-                shutil.copy2(cached, preview_binary)
-            checked = deploy_and_check(preview, preview, mirror, [], no_skills=True)
-            if not checked.get("tool"):
-                if checked.get("toolStatus") == APP_CONTROL_BLOCKED:
+            verified_tool = None
+            tool_origin = ""
+            if source_only:
+                deploy_and_check(preview, preview, mirror, [], no_skills=True, no_tool=True)
+            else:
+                exe = "bailu.exe" if sys.platform == "win32" else "bailu"
+                cached = project_path(project, record["tool"]) if has_tool else None
+                if cached and cached.is_file():
+                    preview_binary = preview / ".bailu" / "bin" / exe
+                    preview_binary.parent.mkdir(parents=True)
+                    shutil.copy2(cached, preview_binary)
+                checked = deploy_and_check(preview, preview, mirror, [], no_skills=True)
+                if checked.get("tool"):
+                    verified_tool = project_path(preview, checked["tool"])
+                    tool_origin = checked["toolOrigin"]
+                    if tool_origin == "之前放入的":
+                        tool_origin = record.get("toolOrigin", tool_origin)
+                elif checked.get("toolStatus") != APP_CONTROL_BLOCKED:
+                    raise SystemExit("新版 bailu 未就绪，已保留原部署。")
+                elif has_tool:
                     raise SystemExit("新版 bailu 未通过 Windows 应用控制验收（WinError 4551），已保留原部署。")
-                raise SystemExit("新版 bailu 未就绪，已保留原部署。")
-            verified_tool = project_path(preview, checked["tool"])
-            origin = checked["toolOrigin"]
-            if origin == "之前放入的":
-                origin = record.get("toolOrigin", origin)
+                else:
+                    print("新版 bailu 未通过 Windows 应用控制验收（WinError 4551），仅更新技能和知识库。")
             lock = project_path(source, ".bailu/update-lock")
             lock.parent.mkdir(parents=True, exist_ok=True)
             try:
@@ -321,7 +332,7 @@ def update(project: Path, preferred: str | None, directories: list[str], check_o
             except FileExistsError:
                 raise SystemExit(f"已有升级正在应用。若上次异常中止，确认没有升级进程后移除 {lock}。") from None
             try:
-                apply_update(project, source, tip, current, mirror, directories, preview, binary, verified_tool, origin)
+                apply_update(project, source, tip, current, mirror, directories, preview, verified_tool, tool_origin)
             finally:
                 lock.rmdir()
         finally:
@@ -329,7 +340,7 @@ def update(project: Path, preferred: str | None, directories: list[str], check_o
 
 
 def apply_update(project: Path, source: Path, tip: str, current: str, mirror: str, directories: list[str],
-                 preview: Path, binary: Path, verified_tool: Path, origin: str) -> None:
+                 preview: Path, verified_tool: Path | None, tool_origin: str) -> None:
     if local_git(source, "rev-parse", "HEAD").stdout.strip() != current:
         raise SystemExit("预检期间框架版本发生变化，请重新检查更新。")
     status = local_git(source, "status", "--porcelain", "--untracked-files=no")
@@ -344,7 +355,9 @@ def apply_update(project: Path, source: Path, tip: str, current: str, mirror: st
             and legacy.is_file() and legacy.resolve().is_relative_to(project)
             and hashlib.sha256(legacy.read_bytes()).hexdigest() == record.get("hashes", {}).get(legacy_name)):
         files.append(legacy)
-    files.append(binary)
+    if verified_tool is not None:
+        binary = source / ".bailu" / "bin" / verified_tool.name
+        files.append(binary)
     files.extend(project_path(project, directory) / name for directory in directories for name in sorted(names))
     relative = [path.relative_to(project) for path in dict.fromkeys(files)]
     backup = project_path(source, ".bailu/update-backups/" + uuid4().hex[:12])
@@ -364,12 +377,17 @@ def apply_update(project: Path, source: Path, tip: str, current: str, mirror: st
     if merged.returncode:
         raise SystemExit(merged.stderr.strip() or merged.stdout.strip())
     try:
-        binary.parent.mkdir(parents=True, exist_ok=True)
-        with tempfile.TemporaryDirectory(dir=binary.parent) as staging:
-            replacement = Path(staging) / binary.name
-            shutil.copy2(verified_tool, replacement)
-            replacement.replace(binary)
-        deploy_and_check(project, source, mirror, directories, no_skills=not directories, tool_origin=origin)
+        if verified_tool is None:
+            deploy_and_check(project, source, mirror, directories, no_skills=not directories, no_tool=True)
+        else:
+            binary.parent.mkdir(parents=True, exist_ok=True)
+            with tempfile.TemporaryDirectory(dir=binary.parent) as staging:
+                replacement = Path(staging) / binary.name
+                shutil.copy2(verified_tool, replacement)
+                replacement.replace(binary)
+            checked = deploy_and_check(project, source, mirror, directories, no_skills=not directories, tool_origin=tool_origin)
+            if checked.get("toolStatus") == APP_CONTROL_BLOCKED:
+                raise SystemExit("Windows 应用控制阻止了升级后的 bailu（WinError 4551）。")
     except (OSError, ValueError, KeyError, SystemExit, KeyboardInterrupt) as error:
         reverted = local_git(source, "reset", "--keep", current)
         if reverted.returncode:
@@ -404,20 +422,20 @@ def main() -> None:
     mode = parser.add_mutually_exclusive_group()
     mode.add_argument("--check-update", action="store_true", help="检查是否能从公开镜像快进升级")
     mode.add_argument("--update", action="store_true", help="先验收新版本，再升级当前部署")
-    mode.add_argument("--no-tool", action="store_true", help="部署技能和知识库，跳过安装与运行 bailu")
+    parser.add_argument("--no-tool", action="store_true", help="仅部署或更新技能和知识库，跳过安装与运行 bailu")
     args = parser.parse_args()
     project = args.project.resolve()
     home = Path.home().resolve()
     if not project.is_dir() or project == home or project in home.parents:
         raise SystemExit(f"请选择一个现有的独立项目目录：{project}")
     if args.check_update or args.update:
-        update(project, args.mirror, args.skills_dir, args.check_update)
+        update(project, args.mirror, args.skills_dir, args.check_update, no_tool=args.no_tool)
         return
     existed = complete_checkout(project) or complete_checkout(project / "bailu-power-trading")
     source, mirror = checkout(project, args.mirror or "github")
     if existed and not args.no_tool:
         mirror = resume_checkout(project, source, mirror)
-    print(f"源码目录 {source}（优先从 {mirror} 下载工具）")
+    print(f"源码目录 {source}" if args.no_tool else f"源码目录 {source}（优先从 {mirror} 下载工具）")
     deploy_and_check(project, source, mirror, args.skills_dir, no_tool=args.no_tool)
 
 

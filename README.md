@@ -11,10 +11,10 @@
 在能运行命令、读写文件的 Agent 里打开项目文件夹，复制下面的提示词。大陆和海外用同一段。
 
 ```text
-请现在把当前文件夹部署为 Bailu 电力交易工作区。记下当前目录的绝对路径，把部署脚本下载到项目内的临时文件。从 https://raw.githubusercontent.com/Muguett-DBY/bailu-power-trading/main/scripts/bootstrap.py 获取，失败、超时或返回网页时立即改用 https://gitee.com/Muguett/bailu-power-trading/raw/main/scripts/bootstrap.py 。每个下载最多尝试 15 秒，确认是 Python 脚本后，用现有的 Python 3.10+ 执行它，传入 --project 和刚记下的绝对路径，以及 --mirror github 或 --mirror gitee（与下载成功的镜像一致）。如果你的 Agent 使用专用的项目级技能目录，再传 --skills-dir .agents/skills 和 --skills-dir <那个目录>。脚本会自动克隆、切换镜像并验收。完成后读取项目的 AGENTS.md，告诉我工具路径和自检结果。只在当前项目内写入，两个镜像都失败时给出实际错误。
+请现在把当前文件夹部署为 Bailu 电力交易工作区。记下当前目录的绝对路径，把部署脚本下载到项目内的临时文件。从 https://raw.githubusercontent.com/Muguett-DBY/bailu-power-trading/main/scripts/bootstrap.py 获取，失败、超时或返回网页时立即改用 https://gitee.com/Muguett/bailu-power-trading/raw/main/scripts/bootstrap.py 。每个下载最多尝试 15 秒，确认是 Python 脚本后，用现有的 Python 3.10+ 执行它，传入 --project 和刚记下的绝对路径，以及 --mirror github 或 --mirror gitee（与下载成功的镜像一致）。如果你的 Agent 使用专用的项目级技能目录，再传 --skills-dir .agents/skills 和 --skills-dir <那个目录>。脚本会自动克隆、切换镜像并验收。完成后读取项目的 AGENTS.md，告诉我工具状态和自检结果。只在当前项目内写入，两个镜像都失败时给出实际错误。
 ```
 
-部署脚本从先可用的镜像浅克隆源码，克隆失败或超时就换另一个。工具和 SHA‑256 清单优先从源码镜像取，失败后依次尝试另一镜像和 jsDelivr 上该版本的 `artifacts-v<版本>` 标签。成功后会检查工具和政策库，并把工具路径写入项目根目录的 `.bailu-install.json`。
+部署脚本从先可用的镜像浅克隆源码，克隆失败或超时就换另一个。工具和 SHA‑256 清单优先从源码镜像取，失败后依次尝试另一镜像和 jsDelivr 上该版本的 `artifacts-v<版本>` 标签。安装器检查政策库，并在项目根目录的 `.bailu-install.json` 记录工具状态和通过自检的工具路径。
 
 部署需要 Git 和 Python 3.10+，用已有的 `python3`、`python` 或 Windows 的 `py -3` 即可。Windows、Linux 和 macOS 都有预编译工具。通过公开镜像部署无需仓库账号或 Go。可以重复传 `--skills-dir`。空项目可按所用宿主指定 `.agents/skills`（Codex）、`.codebuddy/skills`（WorkBuddy 的代码开发项目）、`.zcode/skills`（ZCode）或 `.claude/skills`（Claude Code）。项目已有相应宿主目录时，默认部署会一并放入对应的技能目录。
 
@@ -31,7 +31,7 @@
 
 ### Windows 应用控制与源码模式
 
-如果 Windows 用 `WinError 4551` 拒绝执行 `bailu.exe`，最新版安装器会报告应用控制拦截，完成项目技能、手册与政策库的部署。也可以在运行 `bootstrap.py` 时加 `--no-tool`，直接部署这些内容。此前安装中断时，重新运行最新版脚本可继续使用未改动的官方源码目录。已有安装升级时，候选工具先验收，拦截会保留原安装。
+如果 Windows 用 `WinError 4551` 拒绝执行 `bailu.exe`，最新版安装器会报告应用控制拦截，完成项目技能、手册与政策库的部署。也可以在运行 `bootstrap.py` 时加 `--no-tool`，直接部署这些内容。此前安装中断时，重新运行最新版脚本可继续使用未改动的官方源码目录。
 
 `bailu 0.4.0` 的 Windows 包为早先发布的未签名包。受控 Windows 设备上的完整计算、对账、台账和其他 `bailu` 能力，需要设备接受的签名版本。Windows 签名与发布流程见[签名指南](docs/windows-signing.md)。[Microsoft Smart App Control](https://learn.microsoft.com/en-us/windows/apps/develop/smart-app-control/code-signing-for-smart-app-control)
 
@@ -44,6 +44,8 @@
 ```
 
 已安装 v0.3.0 或更新版时，也可以在框架目录运行 `python scripts/bootstrap.py --project <项目根目录> --check-update`，应用更新时把最后一个参数换成 `--update`。v0.3.1 的脚本会比较公开镜像可用的提交，两边一致时优先此前部署的镜像，历史分叉时报告两边提交。升级先在临时工作树校验工具和知识库，再快进应用。部署文件的备份位于框架目录下的 `.bailu/update-backups/`，应用失败时恢复原部署。
+
+使用 `--no-tool` 部署的项目可以直接用 `--update` 更新技能和知识库。此前因 Windows 应用控制拦截而缺少工具的项目，会先验收新版工具，仍被拦截时更新技能和知识库。只更新这些内容时用 `--update --no-tool`。已有可用工具的项目会保留原部署，直到候选工具通过验收。
 
 升级会把上版部署且内容未改动的旧提问扩展移出加载目录。自编或改过的扩展由项目维护。若已手动同步源码，可在框架目录运行 `python scripts/deploy.py --project <项目根目录>` 刷新部署。
 

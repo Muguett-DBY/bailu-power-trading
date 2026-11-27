@@ -11,10 +11,10 @@ It is taken out of Bailu.SI, a desktop assistant for electricity trading, which 
 Open the project folder in an agent that can run commands and read and write files. Use the same prompt in mainland China and elsewhere.
 
 ```text
-Set up this folder as my Bailu electricity-trading workspace now. Record its absolute path and download the bootstrap script to a temporary file within the project. Fetch https://raw.githubusercontent.com/Muguett-DBY/bailu-power-trading/main/scripts/bootstrap.py first. If it fails, times out, or returns a web page, immediately try https://gitee.com/Muguett/bailu-power-trading/raw/main/scripts/bootstrap.py . Limit each download to 15 seconds. Confirm the response is Python source and run it with Python 3.10+, passing --project followed by the absolute path you recorded and --mirror github or --mirror gitee to match the download that succeeded. If your agent uses a dedicated project skill directory, also pass --skills-dir .agents/skills and --skills-dir <that directory>. The script clones the repository, switches mirrors when needed, and runs the deployment checks. Read the project's AGENTS.md after it finishes and report the tool path and check results. Keep writes inside the project and report the actual errors if both mirrors fail.
+Set up this folder as my Bailu electricity-trading workspace now. Record its absolute path and download the bootstrap script to a temporary file within the project. Fetch https://raw.githubusercontent.com/Muguett-DBY/bailu-power-trading/main/scripts/bootstrap.py first. If it fails, times out, or returns a web page, immediately try https://gitee.com/Muguett/bailu-power-trading/raw/main/scripts/bootstrap.py . Limit each download to 15 seconds. Confirm the response is Python source and run it with Python 3.10+, passing --project followed by the absolute path you recorded and --mirror github or --mirror gitee to match the download that succeeded. If your agent uses a dedicated project skill directory, also pass --skills-dir .agents/skills and --skills-dir <that directory>. The script clones the repository, switches mirrors when needed, and runs the deployment checks. Read the project's AGENTS.md after it finishes and report the tool status and check results. Keep writes inside the project and report the actual errors if both mirrors fail.
 ```
 
-The bootstrap shallow-clones the first available source mirror and retries the other on failure or timeout. It prefers the successful source mirror for the matching binary and SHA-256 manifest, followed by the other mirror and the version-specific `artifacts-v<version>` tag on jsDelivr. It checks the tool and policy library and records the tool path in `.bailu-install.json` at the project root.
+The bootstrap shallow-clones the first available source mirror and retries the other on failure or timeout. It prefers the successful source mirror for the matching binary and SHA-256 manifest, followed by the other mirror and the version-specific `artifacts-v<version>` tag on jsDelivr. It checks the policy library and records tool status and any verified tool path in `.bailu-install.json` at the project root.
 
 Both public mirrors include the handbook, 151 independently sourced official documents, and the early ECNote snapshot of 2,180 records. Run `bailu docs "<question>"` to search the official library or `bailu policy search --province 天津` to find material in the snapshot. A snapshot date or status is a catalog label. Check the original issuer's text when determining which version applies. See [snapshot provenance](knowledge/ecnote/README.md).
 
@@ -31,7 +31,7 @@ The deployment is **self-contained**: everything stays in the folder. No global 
 
 ### Windows App Control and data-only deployment
 
-If Windows blocks `bailu.exe` with `WinError 4551`, the installer reports the App Control failure and completes the installation of the skills, handbook and policy data. Pass `--no-tool` to `bootstrap.py` to deploy those resources directly. After an interrupted installation, run the latest script again to resume from a clean official checkout. An upgrade validates the new tool before replacing an existing installation.
+If Windows blocks `bailu.exe` with `WinError 4551`, the installer reports the App Control failure and completes the installation of the skills, handbook and policy data. Pass `--no-tool` to `bootstrap.py` to deploy those resources directly. After an interrupted installation, run the latest script again to resume from a clean official checkout.
 
 The Windows archives for version 0.4.0 were published without signatures. A device enforcing App Control needs an accepted signed release to use calculations, reconciliation, ledgers and other `bailu` functions. See the [Windows release signing guide](docs/windows-signing.md). [Microsoft Smart App Control](https://learn.microsoft.com/en-us/windows/apps/develop/smart-app-control/code-signing-for-smart-app-control)
 
@@ -46,6 +46,8 @@ Update the Bailu framework already deployed in the current project. Download the
 ```
 
 With v0.3.0 or later installed, run `python scripts/bootstrap.py --project <project root> --check-update` from the framework directory. Use `--update` to apply an available update. The updater prefers the previous mirror, checks the candidate in a temporary worktree, and applies a fast-forward. It keeps backups in `.bailu/update-backups/` in the framework directory and restores the installation if applying the deployment fails. Save local framework source changes and resolve divergent Git history before upgrading.
+
+Projects deployed with `--no-tool` can update their skills and policy data with `--update`. If Windows App Control previously blocked the tool, the updater checks the new binary first and updates the skills and data if it is still blocked. Use `--update --no-tool` to skip that binary check in a project without an installed tool. Projects with an available tool keep the existing deployment until the replacement passes its checks.
 
 ## Project memory
 

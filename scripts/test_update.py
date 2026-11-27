@@ -70,9 +70,27 @@ class UpdateTest(unittest.TestCase):
         self.git(self.remote, "commit", "-m", message)
         return self.git(self.remote, "rev-parse", "HEAD")
 
-    def run_update(self, check_only=False):
+    def run_update(self, check_only=False, *, no_tool=False):
         with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
-            bootstrap.update(self.project, "github", [], check_only)
+            bootstrap.update(self.project, "github", [], check_only, no_tool=no_tool)
+
+    def source_only_record(self, status=None):
+        record = json.loads(self.old_manifest)
+        tool = record.pop("tool")
+        record.pop("toolOrigin")
+        if status is not None:
+            record["toolStatus"] = status
+        if status == bootstrap.APP_CONTROL_BLOCKED:
+            record["retainedTool"] = tool
+        self.old_manifest = json.dumps(record).encode("utf-8")
+        self.write(self.manifest, self.old_manifest)
+
+    def build_source_only_candidate(self):
+        self.write(self.remote / "scripts/deploy.py", Path(bootstrap.__file__).with_name("deploy.py").read_bytes())
+        self.write(self.remote / "knowledge/ecnote/index.json", b'[{"id":"policy"}]\n')
+        self.write(self.remote / "knowledge/ecnote/docs/policy.md", b"# Test policy\n")
+        self.write(self.remote / "skills/power-trading/new-policy/SKILL.md", b"# New policy skill\n")
+        return self.commit("complete deployable data update")
 
     def test_check_falls_back_without_changing_deployment(self):
         stale = self.remote.parent / "stale"
@@ -205,6 +223,85 @@ class UpdateTest(unittest.TestCase):
         self.assertEqual(self.manifest.read_bytes(), self.old_manifest)
         self.assertEqual(self.binary.read_bytes(), b"previous binary")
         self.assertEqual(list(self.project.glob(".bailu-update-*")), [])
+
+    def test_upgrade_preserves_legacy_source_only_installation_by_default(self):
+        self.source_only_record()
+        self.binary.unlink()
+        candidate = self.build_source_only_candidate()
+
+        with patch.object(bootstrap, "deploy_and_check", wraps=bootstrap.deploy_and_check) as check:
+            self.run_update()
+
+        self.assertEqual([call.kwargs["no_tool"] for call in check.call_args_list], [True, True])
+        self.assertEqual(self.git(self.checkout, "rev-parse", "HEAD"), candidate)
+        self.assertEqual(json.loads(self.manifest.read_bytes())["toolStatus"], bootstrap.TOOL_NOT_INSTALLED)
+        self.assertNotIn("tool", json.loads(self.manifest.read_bytes()))
+        self.assertFalse(self.binary.exists())
+        self.assertEqual((self.checkout / "knowledge/ecnote/docs/policy.md").read_bytes(), b"# Test policy\n")
+        self.assertEqual((self.project / ".agents/skills/new-policy/SKILL.md").read_bytes(), b"# New policy skill\n")
+
+    def test_explicit_source_only_update_preserves_blocked_installation(self):
+        self.source_only_record(bootstrap.APP_CONTROL_BLOCKED)
+        candidate = self.build_source_only_candidate()
+
+        with patch.object(bootstrap, "deploy_and_check", wraps=bootstrap.deploy_and_check) as check:
+            self.run_update(no_tool=True)
+
+        self.assertEqual([call.kwargs["no_tool"] for call in check.call_args_list], [True, True])
+        self.assertEqual(self.git(self.checkout, "rev-parse", "HEAD"), candidate)
+        record = json.loads(self.manifest.read_bytes())
+        self.assertEqual(record["toolStatus"], bootstrap.APP_CONTROL_BLOCKED)
+        self.assertEqual(record["retainedTool"], self.binary.relative_to(self.project).as_posix())
+        self.assertNotIn("tool", record)
+        self.assertEqual(self.binary.read_bytes(), b"previous binary")
+
+    def test_blocked_candidate_updates_source_data_when_there_is_no_callable_tool(self):
+        self.source_only_record(bootstrap.APP_CONTROL_BLOCKED)
+        candidate = self.build_source_only_candidate()
+        actual_check = bootstrap.deploy_and_check
+
+        def check(project, source, mirror, directories, *, no_skills, no_tool=False):
+            if project == source:
+                self.assertTrue(no_skills)
+                self.assertFalse(no_tool)
+                return {"toolStatus": bootstrap.APP_CONTROL_BLOCKED}
+            self.assertTrue(no_tool)
+            return actual_check(project, source, mirror, directories, no_skills=no_skills, no_tool=no_tool)
+
+        with patch.object(bootstrap, "deploy_and_check", side_effect=check):
+            self.run_update()
+
+        self.assertEqual(self.git(self.checkout, "rev-parse", "HEAD"), candidate)
+        record = json.loads(self.manifest.read_bytes())
+        self.assertEqual(record["toolStatus"], bootstrap.APP_CONTROL_BLOCKED)
+        self.assertNotIn("tool", record)
+        self.assertEqual(self.binary.read_bytes(), b"previous binary")
+
+    def test_explicit_source_only_update_refuses_to_leave_existing_tool_unchecked(self):
+        with patch.object(bootstrap, "update_candidate") as candidate, self.assertRaisesRegex(SystemExit, "已安装 bailu"):
+            self.run_update(no_tool=True)
+
+        candidate.assert_not_called()
+        self.assertEqual(self.git(self.checkout, "rev-parse", "HEAD"), self.old)
+        self.assertEqual(self.manifest.read_bytes(), self.old_manifest)
+        self.assertEqual(self.binary.read_bytes(), b"previous binary")
+
+    def test_upgrade_restores_existing_tool_when_policy_blocks_replacement_after_preflight(self):
+        def deploy(project, source, mirror, directories, *, no_skills, tool_origin=""):
+            if no_skills:
+                self.write(source / ".bailu/bin" / self.exe, b"verified binary")
+                return {"tool": f".bailu/bin/{self.exe}", "toolOrigin": "verified release"}
+            self.assertEqual(self.binary.read_bytes(), b"verified binary")
+            blocked = {"toolStatus": bootstrap.APP_CONTROL_BLOCKED}
+            self.manifest.write_text(json.dumps(blocked), encoding="utf-8")
+            return blocked
+
+        with patch.object(bootstrap, "deploy_and_check", side_effect=deploy), self.assertRaisesRegex(SystemExit, "4551"):
+            self.run_update()
+
+        self.assertEqual(self.git(self.checkout, "rev-parse", "HEAD"), self.old)
+        self.assertEqual(self.manifest.read_bytes(), self.old_manifest)
+        self.assertEqual(self.binary.read_bytes(), b"previous binary")
 
     def test_failed_apply_restores_version_and_deployment(self):
         legacy = ".pi/extensions/bailu-ask-user.ts"
