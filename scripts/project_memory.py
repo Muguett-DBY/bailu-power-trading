@@ -4,6 +4,7 @@ import argparse
 import hashlib
 import json
 import os
+import re
 import sys
 import tempfile
 from dataclasses import asdict, dataclass
@@ -13,6 +14,7 @@ from pathlib import Path
 
 KINDS = ("preference", "correction")
 IGNORE = "# Bailu project-local memory\n*\n"
+RFC3339_FRACTION = re.compile(r"\.([0-9]{1,9})(?=Z$|[+-][0-9]{2}:[0-9]{2}$)")
 
 
 def memory_name(kind: str, scope: str, key: str) -> str:
@@ -32,7 +34,10 @@ class Record:
     updated_at: str
 
     def modified(self) -> datetime:
-        return datetime.fromisoformat(self.updated_at.replace("Z", "+00:00"))
+        # Go RFC3339Nano can use any precision through nanoseconds. Python
+        # 3.10 accepts microseconds, so normalize only for parsing and sorting.
+        stamp = RFC3339_FRACTION.sub(lambda match: "." + match[1].ljust(6, "0")[:6], self.updated_at)
+        return datetime.fromisoformat(stamp.replace("Z", "+00:00"))
 
     def matches(self, kind: str | None, scope: str, terms: list[str]) -> bool:
         if (kind and self.kind != kind) or (scope and self.scope.casefold() != scope):

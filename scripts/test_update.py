@@ -160,8 +160,11 @@ class UpdateTest(unittest.TestCase):
         self.assertEqual(self.skill.read_bytes(), b"my edited skill\n")
         self.assertEqual((self.project / "invoice.txt").read_bytes(), b"business data")
         self.assertEqual(memory.read_bytes(), b'{"key":"report style","value":"decision first"}')
-        self.assertEqual((self.project / ".agents/skills/new-policy/SKILL.md").read_bytes(), b"# New policy skill\n")
-        self.assertEqual((self.project / ".claude/skills/new-policy/SKILL.md").read_bytes(), b"# New policy skill\n")
+        new_skill = "new-policy/SKILL.md"
+        source_skill = self.checkout / "skills/power-trading" / new_skill
+        self.assertEqual(source_skill.read_text(encoding="utf-8"), "# New policy skill\n")
+        for directory in (".agents/skills", ".claude/skills"):
+            self.assertEqual((self.project / directory / new_skill).read_bytes(), source_skill.read_bytes())
         self.assertEqual((self.project / "AGENTS.md").read_bytes(), b"my own project guidance\n")
         for name in ("CLAUDE.md", "GEMINI.md"):
             self.assertIn(b"@bailu-power-trading/AGENTS.md", (self.project / name).read_bytes())

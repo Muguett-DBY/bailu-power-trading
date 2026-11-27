@@ -10,6 +10,8 @@ import importlib.util
 import io
 import json
 import os
+import subprocess
+import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -27,7 +29,9 @@ class DeploymentTest(unittest.TestCase):
         self.deploy = load()
         temporary = tempfile.TemporaryDirectory()
         self.addCleanup(temporary.cleanup)
-        self.home = Path(temporary.name)
+        # Match the CLI's resolved project path, including Windows 8.3 aliases.
+        self.unresolved_home = Path(temporary.name)
+        self.home = self.unresolved_home.resolve()
         self.said = io.StringIO()
 
     def framework_at(self, folder: Path, skills=("one",)) -> Path:
@@ -48,6 +52,19 @@ class DeploymentTest(unittest.TestCase):
     def deploy_into(self, project: Path, force=False, with_skills=True, hosts=None, directories=None):
         self.quietly(self.deploy.deploy, project, directories or [], with_skills, force, hosts or [])
         return json.loads((project / self.deploy.MANIFEST).read_text(encoding="utf-8"))
+
+    def test_cli_resolves_the_project_alias_before_installing(self):
+        project = self.home / "project"
+        framework = self.framework_at(project / "bailu-power-trading")
+        script = framework / "scripts/deploy.py"
+        script.parent.mkdir()
+        script.write_bytes(Path(self.deploy.__file__).read_bytes())
+        alias = self.unresolved_home / "project" / ".." / "project"
+        result = subprocess.run([sys.executable, str(script), "--project", str(alias), "--host", "workbuddy"],
+                                capture_output=True, encoding="utf-8")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertTrue((project / ".agents/skills/one/SKILL.md").is_file())
+        self.assertTrue((project / ".codebuddy/skills/one/SKILL.md").is_file())
 
     def test_skills_go_to_the_common_folder_and_to_each_agent_the_project_uses(self):
         project = self.home / "项目 with spaces"

@@ -53,11 +53,14 @@ class ProjectMemoryTest(unittest.TestCase):
         # Go lowercases each Unicode character independently. Final sigma stays σ.
         name = hashlib.sha256("preference\0project\0οσ".encode()).hexdigest() + ".json"
         legacy = self.store / name
-        legacy.write_text(json.dumps({
+        record = {
             "kind": "preference", "key": "ΟΣ", "scope": "project", "value": "原内容",
             "source": "用户明确表达", "updated_at": "2026-01-02T03:04:05.123456789Z",
-        }), encoding="utf-8")
-        self.assertEqual(self.show()[0]["value"], "原内容")
+        }
+        for suffix in (".1Z", ".01234+08:00", ".123456789Z"):
+            record["updated_at"] = "2026-01-02T03:04:05" + suffix
+            legacy.write_text(json.dumps(record), encoding="utf-8")
+            self.assertEqual(self.show()[0], record)
         self.invoke("save", "preference", "οσ", "新内容")
         self.assertEqual(list(self.store.glob("*.json")), [legacy])
         self.assertEqual(self.show()[0]["value"], "新内容")
