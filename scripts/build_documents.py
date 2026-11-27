@@ -1,6 +1,6 @@
-"""Build the library of official documents the handbook rests on, for `bailu docs` to search.
+"""Build the official documents library used to verify the handbook.
 
-    python scripts/build_documents.py
+    uv run --project office --locked python -m scripts.build_documents
 
 The sources are what scripts/fetch_cited_sources.py kept under
 docs/research/sources while the handbook's quotes were checked: the page of
@@ -19,17 +19,17 @@ import csv
 import hashlib
 import json
 import re
-import subprocess
 import sys
 import urllib.parse
 from datetime import date
 from pathlib import Path
 
+from office.read_file import pdf, word
+
 ROOT = Path(__file__).resolve().parent.parent
 SOURCES = ROOT / "docs" / "research" / "sources"
 HANDBOOK_RESEARCH = ROOT / "docs" / "research" / "handbook"
 LIBRARY = ROOT / "knowledge" / "documents"
-BAILU = ROOT / "tools" / "bailu" / ("bailu.exe" if sys.platform == "win32" else "bailu")
 LEAST = 400  # characters a document needs to be worth searching
 
 PLACES = {
@@ -193,8 +193,15 @@ def place_in(title: str) -> str:
 
 
 def extracted(path: Path) -> str:
-    done = subprocess.run([str(BAILU), "extract", str(path)], capture_output=True)
-    return done.stdout.decode("utf-8", errors="replace").strip() if done.returncode == 0 else ""
+    if path.suffix.lower() == ".pdf":
+        return "\n".join(page["text"] or "" for page in pdf(path, 1, sys.maxsize, None)["pages"]).strip()
+    paragraphs = []
+    for block in word(path, 1, sys.maxsize, None)["blocks"]:
+        if "text" in block:
+            paragraphs.append(block["text"])
+        else:
+            paragraphs.extend("\t".join(row["cells"]) for row in block["rows"])
+    return "\n".join(paragraphs).strip()
 
 
 def safe(name: str) -> str:
@@ -206,11 +213,8 @@ def main() -> None:
         sys.stdout.reconfigure(encoding="utf-8", errors="replace")
     index = json.loads((SOURCES / "index.json").read_text(encoding="utf-8"))
     cited, pages, named = cited_places(), pages_of_attachments(), cited_titles()
-    for old in LIBRARY.glob("*/"):
-        for file in old.iterdir():
-            file.unlink()
-        old.rmdir()
     rows, left, numbers = [], collections.Counter(), collections.Counter()
+    output = {}
     kept = {}  # by digest, the text of each document as kept
     for address, folder in sorted(index.items(), key=lambda item: int(item[1].split("-")[0])):
         source = SOURCES / folder
@@ -249,9 +253,15 @@ def main() -> None:
             file = f"{numbers[place]:03d}-{safe(name)}.md"
             head = (f"# {name}\n\n{place} · {kind} · 来源：{address} · "
                     f"{'日期：' + stamp if stamp else '日期未标注'} · 取回日期：{date.today().isoformat()}\n\n")
-            (LIBRARY / place).mkdir(parents=True, exist_ok=True)
-            (LIBRARY / place / file).write_text(head + text + "\n", encoding="utf-8", newline="\n")
+            output[LIBRARY / place / file] = head + text + "\n"
             rows.append([f"{place}/{file}", name, place, kind, stamp, host, address, len(text)])
+    for old in LIBRARY.glob("*/"):
+        for file in old.iterdir():
+            file.unlink()
+        old.rmdir()
+    for path, text in output.items():
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(text, encoding="utf-8", newline="\n")
     with open(LIBRARY / "catalogue.csv", "w", encoding="utf-8", newline="\n") as out:
         writer = csv.writer(out, lineterminator="\n")
         writer.writerow(["文件", "标题", "省份或区域", "类型", "日期", "站点", "来源", "字数"])

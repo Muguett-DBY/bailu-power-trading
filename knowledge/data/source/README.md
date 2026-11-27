@@ -1,6 +1,6 @@
 # knowledge/data/source 数据来源与核验记录
 
-整理日期：2026-11-26。本目录保存国家发展改革委官方附件的分省电价参数，整理成结构化数据，供 `bailu tariff` 查询；`knowledge/data/tariffs.txt` 由 `scripts/make_tariff_data.py` 从这里的 JSON 生成。
+整理于 2026-11-26。本目录保存从国家发展改革委官方附件提取的分省电价参数。`scripts/make_tariff_data.py` 读取这里的 JSON，生成供 Agent 查询的 `knowledge/data/tariffs.txt`。
 原则：每个数字都能回溯到附件原文；拿不准的不放进数据，列在第 11 节。
 
 ## 1. 文件清单

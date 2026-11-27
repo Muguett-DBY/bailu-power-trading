@@ -20,7 +20,7 @@ __pycache__/
 /.npm-cache/
 /.agents/skills/
 
-# What scripts/publish.py builds
+# Local archives and backups from older releases
 /.release/
 
 # The optional analysis layer keeps its environment inside the project.

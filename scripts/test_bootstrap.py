@@ -79,38 +79,33 @@ class BootstrapTest(unittest.TestCase):
             self.assertEqual(bootstrap.checkout(self.project, "github"), (self.project, "gitee"))
         run.assert_called_once()
 
-    def test_blocked_tool_deployment_validates_source_data_without_launching_bailu(self):
+    def test_default_install_checks_source_and_only_runs_python_deployment(self):
         self.populate_data()
-        record = {"toolStatus": bootstrap.APP_CONTROL_BLOCKED}
+        record = {"deployment": "agent-framework", "framework": ".", "files": []}
         (self.project / bootstrap.MANIFEST).write_text(json.dumps(record), encoding="utf-8")
         output = io.StringIO()
         with patch.object(bootstrap.subprocess, "run", return_value=subprocess.CompletedProcess([], 0)) as run, contextlib.redirect_stdout(output):
-            self.assertEqual(bootstrap.deploy_and_check(self.project, self.project, "github", []), record)
+            bootstrap.deploy_and_check(self.project, self.project, [".codebuddy/skills"])
         run.assert_called_once()
-        self.assertNotIn("--no-tool", run.call_args.args[0])
-        self.assertIn("命令自检已跳过", output.getvalue())
+        command = run.call_args.args[0]
+        self.assertEqual(command[1], str(self.project / "scripts/deploy.py"))
+        self.assertEqual(command[-2:], ["--skills-dir", ".codebuddy/skills"])
+        self.assertIn("--no-tool", command)
+        self.assertIn("政策原文文件已检查", output.getvalue())
 
-    def test_no_tool_deployment_does_not_launch_an_earlier_executable(self):
-        self.populate_data()
-        record = {"toolStatus": "available", "tool": ".bailu/bin/bailu.exe"}
-        (self.project / bootstrap.MANIFEST).write_text(json.dumps(record), encoding="utf-8")
-        with patch.object(bootstrap.subprocess, "run", return_value=subprocess.CompletedProcess([], 0)) as run, contextlib.redirect_stdout(io.StringIO()):
-            self.assertEqual(bootstrap.deploy_and_check(self.project, self.project, "github", [], no_tool=True), record)
-        run.assert_called_once()
-        self.assertIn("--no-tool", run.call_args.args[0])
-
-    def test_no_tool_deployment_requires_policy_files_to_match_index(self):
+    def test_data_validation_precedes_the_deployment(self):
         self.populate_data()
         (self.project / "knowledge/ecnote/docs/policy.md").unlink()
         with patch.object(bootstrap.subprocess, "run") as run, self.assertRaisesRegex(SystemExit, "与原文文件不一致"):
-            bootstrap.deploy_and_check(self.project, self.project, "github", [], no_tool=True)
+            bootstrap.deploy_and_check(self.project, self.project, [])
         run.assert_not_called()
 
-    def test_explicit_no_tool_accepts_deployment_record_from_older_source(self):
+    def test_stale_checkout_never_runs_its_legacy_binary(self):
         self.populate_data()
-        record = {"framework": ".", "files": ["AGENTS.md"]}
+        record = {"framework": ".", "tool": ".bailu/bin/bailu.exe"}
         (self.project / bootstrap.MANIFEST).write_text(json.dumps(record), encoding="utf-8")
-        with patch.object(bootstrap.subprocess, "run", return_value=subprocess.CompletedProcess([], 0)) as run, contextlib.redirect_stdout(io.StringIO()):
-            self.assertEqual(bootstrap.deploy_and_check(self.project, self.project, "github", [], no_tool=True), record)
+        with patch.object(bootstrap.subprocess, "run", return_value=subprocess.CompletedProcess([], 0)) as run:
+            with self.assertRaisesRegex(SystemExit, "源码还是旧版"):
+                bootstrap.deploy_and_check(self.project, self.project, [])
         run.assert_called_once()
         self.assertIn("--no-tool", run.call_args.args[0])

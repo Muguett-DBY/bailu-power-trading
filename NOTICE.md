@@ -38,7 +38,7 @@ Copyright 2026 GreenFlex contributors
 
 ## bailu 工具依赖的 Go 模块 / Go modules of the bailu tool
 
-列在 `tools/bailu/go.mod` 中，按各自仓库的许可证使用，未随本框架分发其源码。预编译的 `bailu` 随发布附带 `THIRD-PARTY-NOTICES.txt`，收着这些模块的许可证和声明文件。
+参考实现的依赖列在 `tools/bailu/go.mod` 中，按各自仓库的许可证使用。项目部署不需要安装这些 Go 模块。
 
 ## 分析层依赖的 Python 库 / Python libraries of the analysis layer
 

@@ -227,7 +227,7 @@ def main():
     parser.add_argument("input", type=Path)
     parser.add_argument("--output", required=True, type=Path, help="输出名称，不带扩展名")
     parser.add_argument("--formats", nargs="+", choices=RENDERERS, default=list(RENDERERS))
-    parser.add_argument("--reconcile", action="store_true", help="读入 bailu reconcile --format json 的结果")
+    parser.add_argument("--reconcile", action="store_true", help="读入包含对账状态、差额和来源位置的明细 JSON")
     args = parser.parse_args()
     try:
         for target in write_reports(load_report(args.input, args.reconcile), args.output, args.formats):

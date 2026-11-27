@@ -10,12 +10,9 @@ import importlib.util
 import io
 import json
 import os
-import subprocess
 import tempfile
 import unittest
-import zipfile
 from pathlib import Path
-from unittest.mock import patch
 
 
 def load():
@@ -49,7 +46,7 @@ class DeploymentTest(unittest.TestCase):
             return work(*args)
 
     def deploy_into(self, project: Path, force=False, with_skills=True):
-        self.quietly(self.deploy.deploy, project, self.deploy.skill_dirs(project, []), with_skills, False, force)
+        self.quietly(self.deploy.deploy, project, self.deploy.skill_dirs(project, []), with_skills, force)
         return json.loads((project / self.deploy.MANIFEST).read_text(encoding="utf-8"))
 
     def test_skills_go_to_the_common_folder_and_to_each_agent_the_project_uses(self):
@@ -65,36 +62,29 @@ class DeploymentTest(unittest.TestCase):
             self.deploy.skill_dirs(project, [str(self.home / "elsewhere")])
         self.assertIn("要放在项目文件夹里", str(stopped.exception))
 
-    def test_a_project_holding_the_framework_is_told_where_the_rules_and_the_tool_are(self):
+    def test_project_rules_point_to_framework_without_binary_paths(self):
         project = self.home / "project"
-        project.mkdir()
         self.framework_at(project / "bailu-power-trading")
-        written = self.quietly(self.deploy.rules, project, "bailu-power-trading", "bailu-power-trading/.bailu/bin/bailu.exe")
+        written = self.quietly(self.deploy.rules, project, "bailu-power-trading", {})
         self.assertEqual(written, ["AGENTS.md", "CLAUDE.md"])
         rules = (project / "AGENTS.md").read_text(encoding="utf-8")
         self.assertIn("bailu-power-trading/AGENTS.md", rules)
-        self.assertIn("`bailu-power-trading/.bailu/bin/bailu.exe`", rules)
+        self.assertNotIn(".bailu/bin", rules)
         claude = (project / "CLAUDE.md").read_text(encoding="utf-8")
         self.assertEqual(claude.splitlines()[0], "@AGENTS.md")
-        self.assertIn("bailu-power-trading/.bailu/bin/bailu.exe", claude)
-        # What is the project's own is left as it is.
+        self.assertIn("bailu-power-trading/AGENTS.md", claude)
+        self.assertNotIn(".bailu/bin", claude)
         (project / "CLAUDE.md").write_text("the project's own notes\n", encoding="utf-8")
-        self.assertEqual(self.quietly(self.deploy.rules, project, "bailu-power-trading", "x"), [])
+        self.assertEqual(self.quietly(self.deploy.rules, project, "bailu-power-trading", {}), [])
         self.assertEqual((project / "CLAUDE.md").read_text(encoding="utf-8"), "the project's own notes\n")
-        # Without a tool the pointer says so rather than a path.
-        project = self.home / "bare"
-        project.mkdir()
-        written = self.quietly(self.deploy.rules, project, "bailu-power-trading", "")
-        self.assertEqual(written, ["AGENTS.md", "CLAUDE.md"])
-        self.assertIn("没有随部署安装", (project / "CLAUDE.md").read_text(encoding="utf-8"))
 
     def test_the_framework_is_the_project_itself(self):
         project = self.framework_at(self.home / "clone")
-        self.assertEqual(self.quietly(self.deploy.rules, project, ".", "tools/bailu/bailu.exe"), ["CLAUDE.md"])
+        self.assertEqual(self.quietly(self.deploy.rules, project, ".", {}), ["CLAUDE.md"])
         claude = (project / "CLAUDE.md").read_text(encoding="utf-8")
         self.assertNotIn("bailu-power-trading", claude)
         self.assertIn("AGENTS.md", claude)
-        self.assertIn("tools/bailu/bailu.exe", claude)
+        self.assertNotIn(".bailu/bin", claude)
 
     def test_named_checkout_defaults_to_itself(self):
         framework = self.framework_at(self.home / "bailu-power-trading")
@@ -122,26 +112,50 @@ class DeploymentTest(unittest.TestCase):
         self.assertFalse((installed / "one").exists())
         self.assertEqual(edited.read_text(encoding="utf-8"), "personal instructions")
 
-    def test_tool_installation_survives_no_tool_redeploy_and_uninstall_preserves_local_files(self):
+    def test_redeploy_removes_only_manifest_owned_legacy_binaries(self):
         project = self.home / "project"
         framework = self.framework_at(project / "bailu-power-trading")
         tool = framework / ".bailu" / "bin" / "bailu.exe"
         tool.parent.mkdir(parents=True)
-        tool.write_bytes(b"tool")
-        local = framework / ".bailu" / "keep.md"
-        local.write_text("local", encoding="utf-8")
+        tool.write_bytes(b"legacy release tool")
+        other = tool.with_name("bailu")
+        other.write_bytes(b"unregistered local file")
+        local = framework / "tools/bailu/bailu.exe"
+        local.parent.mkdir(parents=True)
+        local.write_bytes(b"developer's local build")
         memory = project / ".bailu-memory" / "preference.json"
         memory.parent.mkdir()
         memory.write_text('{"key":"report style","value":"decision first"}', encoding="utf-8")
-        with patch.object(self.deploy, "install_tool", return_value=(tool, "test")), patch.object(self.deploy.subprocess, "run") as run:
-            run.return_value.returncode = 0
-            self.quietly(self.deploy.deploy, project, [], False, True, False)
-        record = self.deploy_into(project, with_skills=False)
-        self.assertEqual(record["tool"], tool.relative_to(project).as_posix())
-        self.quietly(self.deploy.uninstall, project)
+        readme = project / "AGENTS.md"
+        readme.write_text("pointer with old binary path", encoding="utf-8")
+        earlier = {"framework": framework.name, "tool": tool.relative_to(project).as_posix(),
+                   "toolStatus": "available", "toolOrigin": "github.com", "files": ["AGENTS.md"],
+                   "hashes": {"AGENTS.md": self.deploy.digest_of(readme)}}
+        (project / self.deploy.MANIFEST).write_text(json.dumps(earlier), encoding="utf-8")
+        record = self.deploy_into(project)
+
+        self.assertEqual(record["deployment"], "agent-framework")
+        self.assertLessEqual({"framework", "skills", "files"}, record.keys())
+        self.assertFalse({"tool", "toolStatus", "toolOrigin", "retainedTool"}.intersection(record))
+        self.assertIn("bailu-power-trading/AGENTS.md", readme.read_text(encoding="utf-8"))
+        self.assertNotIn("binary", readme.read_text(encoding="utf-8"))
         self.assertFalse(tool.exists())
-        self.assertTrue(local.is_file())
+        self.assertEqual(other.read_bytes(), b"unregistered local file")
+        self.assertEqual(local.read_bytes(), b"developer's local build")
+        self.quietly(self.deploy.uninstall, project)
+        self.assertTrue(other.is_file())
         self.assertEqual(memory.read_text(encoding="utf-8"), '{"key":"report style","value":"decision first"}')
+
+    def test_uninstall_removes_a_binary_from_a_legacy_deployment(self):
+        project = self.home / "project"
+        framework = self.framework_at(project / "bailu-power-trading")
+        retired = framework / ".bailu/bin/bailu"
+        retired.parent.mkdir(parents=True)
+        retired.write_bytes(b"legacy release")
+        record = {"framework": framework.name, "retainedTool": retired.relative_to(project).as_posix()}
+        (project / self.deploy.MANIFEST).write_text(json.dumps(record), encoding="utf-8")
+        self.quietly(self.deploy.uninstall, project)
+        self.assertFalse(retired.exists())
 
     def test_clarification_skill_installs_for_the_projects_agent_directories(self):
         project = self.home / "project"
@@ -210,198 +224,6 @@ class DeploymentTest(unittest.TestCase):
         self.assertFalse(target.exists())
         self.assertEqual(other.read_bytes(), b"another extension")
 
-    def test_stale_tool_is_replaced_only_after_a_valid_mirror_supplies_its_successor(self):
-        framework = self.framework_at(self.home / "bailu-power-trading")
-        tool = framework / ".bailu" / "bin" / "bailu.exe"
-        tool.parent.mkdir(parents=True)
-        tool.write_bytes(b"old")
-        archive = io.BytesIO()
-        with zipfile.ZipFile(archive, "w") as zipped:
-            zipped.writestr("bailu.exe", b"updated")
-        archive_data = archive.getvalue()
-        name = "bailu-windows-amd64.zip"
-        sums = f"{hashlib.sha256(archive_data).hexdigest()}  {name}\n".encode()
-
-        def download(url, limit):
-            self.assertEqual(tool.read_bytes(), b"old")
-            if url.endswith("SHA256SUMS"):
-                return sums
-            return b"corrupt" if "gitee.com" in url else archive_data
-
-        def version(path):
-            return "bailu 0.0.0" if path == tool else f"bailu {self.deploy.VERSION}"
-
-        with patch.dict(os.environ, BAILU_RELEASE_MIRROR="gitee"), patch.object(self.deploy.sys, "platform", "win32"), patch.object(
-            self.deploy, "system", return_value="windows-amd64"
-        ), patch.object(self.deploy, "fetch", side_effect=download) as fetch, patch.object(
-            self.deploy, "tool_version", side_effect=version
-        ), patch.object(self.deploy, "check_tool"):
-            placed, origin = self.quietly(self.deploy.install_tool, False)
-        self.assertEqual(placed, tool)
-        self.assertEqual(origin, "github.com")
-        self.assertEqual(tool.read_bytes(), b"updated")
-        self.assertEqual([call.args[0].split("/")[2] for call in fetch.call_args_list], ["gitee.com", "gitee.com", "github.com", "github.com"])
-
-    def test_github_release_failure_falls_back_to_gitee_before_cdn(self):
-        candidate = self.home / "bailu.exe"
-        archive = io.BytesIO()
-        with zipfile.ZipFile(archive, "w") as zipped:
-            zipped.writestr("bailu.exe", b"from Gitee")
-        package = archive.getvalue()
-        name = "bailu-windows-amd64.zip"
-        sums = f"{hashlib.sha256(package).hexdigest()}  {name}\n".encode()
-
-        def download(url, limit):
-            if "github.com" in url:
-                raise TimeoutError("GitHub unavailable")
-            return sums if url.endswith("SHA256SUMS") else package
-
-        with patch.dict(os.environ, BAILU_RELEASE_MIRROR="github"), patch.object(
-            self.deploy, "fetch", side_effect=download
-        ) as fetch, patch.object(self.deploy, "tool_version", return_value=f"bailu {self.deploy.VERSION}"):
-            origin = self.quietly(self.deploy.download_tool, name, candidate.name, candidate)
-        self.assertEqual(origin, "gitee.com")
-        self.assertEqual(candidate.read_bytes(), b"from Gitee")
-        self.assertEqual([call.args[0].split("/")[2] for call in fetch.call_args_list], ["github.com", "gitee.com", "gitee.com"])
-
-    def test_app_control_block_installs_data_and_skills_without_retrying_executables(self):
-        project = self.home / "project"
-        framework = self.framework_at(project / "bailu-power-trading")
-        archive = io.BytesIO()
-        with zipfile.ZipFile(archive, "w") as zipped:
-            zipped.writestr("bailu.exe", b"policy-blocked")
-        package = archive.getvalue()
-        sums = f"{hashlib.sha256(package).hexdigest()}  bailu-windows-amd64.zip\n".encode()
-        blocked = OSError("application control policy")
-        blocked.winerror = 4551
-
-        with patch.dict(os.environ, BAILU_RELEASE_MIRROR="gitee"), patch.object(self.deploy.sys, "platform", "win32"), patch.object(
-            self.deploy, "system", return_value="windows-amd64"
-        ), patch.object(self.deploy, "fetch", side_effect=[sums, package]) as fetch, patch.object(
-            self.deploy.subprocess, "run", side_effect=blocked
-        ) as launched, patch.object(self.deploy.shutil, "which") as go:
-            self.quietly(self.deploy.deploy, project, self.deploy.skill_dirs(project, []), True, True, False)
-        manifest_path = project / self.deploy.MANIFEST
-        record = json.loads(manifest_path.read_text(encoding="utf-8"))
-        self.assertEqual(record["toolStatus"], self.deploy.APP_CONTROL_BLOCKED)
-        self.assertNotIn("tool", record)
-        self.assertNotIn("toolOrigin", record)
-        self.assertEqual(fetch.call_count, 2)
-        launched.assert_called_once()
-        go.assert_not_called()
-        self.assertNotIn("没有从", self.said.getvalue())
-        self.assertIn("4551", self.said.getvalue())
-        self.assertTrue((project / ".agents/skills/one/SKILL.md").is_file())
-        self.assertIn("知识库原文", (project / "AGENTS.md").read_text(encoding="utf-8"))
-        tool = framework / ".bailu/bin/bailu.exe"
-        self.assertFalse(tool.exists())
-
-        tool.write_bytes(b"replacement")
-        with patch.object(self.deploy, "install_tool", return_value=(tool, "signed release")):
-            self.quietly(self.deploy.deploy, project, [], False, True, False)
-        refreshed = json.loads(manifest_path.read_text(encoding="utf-8"))
-        self.assertEqual(refreshed["toolStatus"], self.deploy.TOOL_AVAILABLE)
-        self.assertEqual(refreshed["tool"], tool.relative_to(project).as_posix())
-        self.assertNotIn("挡住", (project / "AGENTS.md").read_text(encoding="utf-8"))
-
-    def test_policy_block_at_final_selfcheck_restores_previously_installed_tool(self):
-        project = self.home / "project"
-        framework = self.framework_at(project / "bailu-power-trading")
-        tool = framework / ".bailu/bin/bailu.exe"
-        tool.parent.mkdir(parents=True)
-        tool.write_bytes(b"previous")
-        manifest = project / self.deploy.MANIFEST
-        original = json.dumps({"framework": framework.name, "tool": tool.relative_to(project).as_posix()})
-        manifest.write_text(original, encoding="utf-8")
-        blocked = OSError("application control policy")
-        blocked.winerror = 4551
-
-        def download(name, exe, candidate):
-            candidate.write_bytes(b"replacement")
-            return "github.com"
-
-        with patch.object(self.deploy.sys, "platform", "win32"), patch.object(self.deploy, "system", return_value="windows-amd64"), patch.object(
-            self.deploy, "download_tool", side_effect=download
-        ), patch.object(self.deploy.subprocess, "run", side_effect=blocked):
-            with self.assertRaisesRegex(SystemExit, "4551"):
-                self.quietly(self.deploy.deploy, project, self.deploy.skill_dirs(project, []), True, True, True)
-        self.assertEqual(tool.read_bytes(), b"previous")
-        self.assertEqual(manifest.read_text(encoding="utf-8"), original)
-        self.assertFalse((project / ".agents").exists())
-
-    def test_cached_tool_policy_block_does_not_look_like_a_version_mismatch(self):
-        blocked = OSError("application control policy")
-        blocked.winerror = 4551
-        with patch.object(self.deploy.subprocess, "run", side_effect=blocked):
-            with self.assertRaisesRegex(self.deploy.ApplicationControlBlocked, "4551"):
-                self.deploy.matches_version(self.home / "bailu.exe")
-
-    def test_blocked_cached_tool_can_be_replaced_by_a_new_release(self):
-        project = self.home / "project"
-        framework = self.framework_at(project / "bailu-power-trading")
-        tool = framework / ".bailu/bin/bailu.exe"
-        tool.parent.mkdir(parents=True)
-        tool.write_bytes(b"previous")
-        blocked = OSError("application control policy")
-        blocked.winerror = 4551
-
-        def download(name, exe, candidate):
-            self.assertEqual(tool.read_bytes(), b"previous")
-            candidate.write_bytes(b"launchable release")
-            return "github.com"
-
-        with patch.object(self.deploy.sys, "platform", "win32"), patch.object(self.deploy, "system", return_value="windows-amd64"), patch.object(
-            self.deploy, "download_tool", side_effect=download
-        ) as fetched, patch.object(self.deploy.subprocess, "run", side_effect=[blocked, subprocess.CompletedProcess([], 0)]) as launched:
-            self.quietly(self.deploy.deploy, project, [], False, True, False)
-        self.assertEqual(tool.read_bytes(), b"launchable release")
-        fetched.assert_called_once()
-        self.assertEqual([call.args[0][1] for call in launched.call_args_list], ["version", "selfcheck"])
-        record = json.loads((project / self.deploy.MANIFEST).read_text(encoding="utf-8"))
-        self.assertEqual(record["toolStatus"], self.deploy.TOOL_AVAILABLE)
-        self.assertEqual(record["toolOrigin"], "github.com")
-
-    def test_previously_installed_tool_known_to_be_blocked_is_not_advertised(self):
-        project = self.home / "project"
-        framework = self.framework_at(project / "bailu-power-trading")
-        tool = framework / ".bailu/bin/bailu.exe"
-        tool.parent.mkdir(parents=True)
-        tool.write_bytes(b"previous")
-        manifest = project / self.deploy.MANIFEST
-        relative = tool.relative_to(project).as_posix()
-        manifest.write_text(json.dumps({"framework": framework.name, "tool": relative}), encoding="utf-8")
-        blocked = OSError("application control policy")
-        blocked.winerror = 4551
-
-        with patch.object(self.deploy.sys, "platform", "win32"), patch.object(self.deploy, "system", return_value="windows-amd64"), patch.object(
-            self.deploy, "download_tool", return_value=""
-        ), patch.object(self.deploy.subprocess, "run", side_effect=blocked), patch.object(self.deploy.shutil, "which") as go:
-            self.quietly(self.deploy.deploy, project, [], False, True, False)
-        go.assert_not_called()
-        record = json.loads(manifest.read_text(encoding="utf-8"))
-        self.assertNotIn("tool", record)
-        self.assertEqual(record["retainedTool"], relative)
-        self.assertEqual(record["toolStatus"], self.deploy.APP_CONTROL_BLOCKED)
-        self.assertEqual(tool.read_bytes(), b"previous")
-        self.assertEqual(self.deploy_into(project, with_skills=False)["retainedTool"], relative)
-        self.quietly(self.deploy.uninstall, project)
-        self.assertFalse(tool.exists())
-
-    def test_selfcheck_failure_does_not_install_skills_or_rules(self):
-        project = self.home / "project"
-        framework = self.framework_at(project / "bailu-power-trading")
-        tool = framework / ".bailu" / "bin" / "bailu.exe"
-        tool.parent.mkdir(parents=True)
-        tool.write_bytes(b"tool")
-        with patch.object(self.deploy.sys, "platform", "win32"), patch.object(
-            self.deploy, "matches_version", return_value=True
-        ), patch.object(self.deploy.subprocess, "run") as run:
-            run.return_value.returncode = 1
-            with self.assertRaises(SystemExit):
-                self.quietly(self.deploy.deploy, project, self.deploy.skill_dirs(project, []), True, True, False)
-        self.assertFalse((project / ".agents" / "skills" / "one").exists())
-        self.assertFalse((project / "AGENTS.md").exists())
-        self.assertFalse((project / self.deploy.MANIFEST).exists())
 
     def test_uninstall_refuses_an_escaping_path_before_deleting_any_installation_files(self):
         project = self.home / "project"
@@ -473,18 +295,13 @@ class DeploymentTest(unittest.TestCase):
         self.assertFalse((project / ".agents" / "skills" / "one").exists())
         self.assertFalse((project / "AGENTS.md").exists())
 
-    def test_an_archive_is_used_only_for_the_digest_the_release_names(self):
-        sums = "0f343b0931126a20f133d67c2b018a3b  bailu-windows-amd64.zip\nabc  bailu-linux-amd64.zip\n"
-        self.assertEqual(self.deploy.listed_in(sums, "bailu-linux-amd64.zip"), "abc")
-        self.assertEqual(self.deploy.listed_in(sums, "bailu-darwin-arm64.zip"), "")
-        self.assertEqual(self.deploy.listed_in("9d  *bailu-windows-amd64.zip", "bailu-windows-amd64.zip"), "9d")
 
     def test_deploying_from_outside_the_project_is_refused(self):
         project = self.home / "project"
         project.mkdir()
         self.framework_at(self.home / "elsewhere")
         with self.assertRaises(SystemExit) as stopped:
-            self.quietly(self.deploy.deploy, project, [], True, False, False)
+            self.quietly(self.deploy.deploy, project, [], True, False)
         self.assertIn("不在要工作的项目文件夹里", str(stopped.exception))
 
     def test_a_framework_without_rules_is_refused(self):
@@ -492,7 +309,7 @@ class DeploymentTest(unittest.TestCase):
         framework = self.framework_at(project / "bailu-power-trading")
         (framework / "AGENTS.md").unlink()
         with self.assertRaises(SystemExit) as stopped:
-            self.quietly(self.deploy.deploy, project, [], True, False, False)
+            self.quietly(self.deploy.deploy, project, [], True, False)
         self.assertIn("框架不完整", str(stopped.exception))
 
 

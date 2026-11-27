@@ -1,6 +1,6 @@
 # 办公工作流
 
-办公层适用于一般文档工作，也可把交易工具的结果直接变成工作底稿与汇报。基础安装保留原来的 Git 和 Python 要求，办公脚本用到时再用 uv 同步依赖。以下命令在框架目录运行，路径可改成项目内的绝对路径。
+办公脚本读取带位置的证据，并将核对和交易分析结果变成工作底稿或汇报。用到办公脚本时再用 uv 同步依赖。以下命令在框架目录运行，输入和输出可使用项目内的绝对路径。
 
 ```sh
 uv sync --project office --locked --cache-dir .cache/uv
@@ -14,14 +14,13 @@ uv run --project office --locked --cache-dir .cache/uv python office/read_file.p
 
 从 [`examples/settlement-spec.json`](examples/settlement-spec.json) 复制一份配置，填实际工作表名、表头行、月份列与账单的结算月标签。对每个字段指定列名、PDF 标签、来源单位、目标单位和容差。单位支持 kWh、MWh、GWh、千瓦时、兆瓦时、元、万元等，PDF 打印的单位优先。容差缺省为零。每个 PDF 一个月，字段标签和单一数值在同一行。表头跨列或多值标签应先确认口径。
 
-把以下 `bailu` 换成 `.bailu-install.json` 中的工具路径。使用 UTF-8 保存 JSON 输出。Windows 请用 PowerShell 7，以保持文件编码。
+按 `office-workflow` 技能用 `read_file.py` 取 Excel 格位和账单页码。统一目标单位，以 `Decimal` 运算，差额按账单减总表计算。把每个月的原值、位置、差额、容差和状态填入 `examples/report.json` 的表结构，另存为 UTF-8 的 `核对.json`。可用公式值记录格位与缓存，缺少可信缓存时标为缺项。
 
 ```sh
-bailu reconcile 总表.xlsx 十月.pdf 十一月.pdf --spec 对账配置.json --format json > 核对.json
-uv run --project office --locked --cache-dir .cache/uv python office/report.py 核对.json --reconcile --output 交付/月度核对
+uv run --project office --locked --cache-dir .cache/uv python office/report.py 核对.json --output 交付/月度核对
 ```
 
-核对结果包含一致、超差和缺项，差额方向为账单减总表。可用的 Excel 公式缓存随公式和格位一并记录。公式缺少缓存会单独提示，有原文件或位置的缺项会保留证据。原始表格、PDF 保持原样。生成的 Excel 保留精确值及原文位置，数值按文本保存以避免精度改变。PPT 提供摘要及复核事项，较长文字保留在演讲者备注中。需要追溯时看 Word 或 Excel 明细。
+状态分为一致、超差和缺项。用十进制文本保存精确值和来源位置。原始表格、PDF 保持原样。PPT 提供摘要及复核事项，较长文字放在演讲者备注中。需要追溯时看 Word 或 Excel 明细。
 
 ## 输出一般报告
 

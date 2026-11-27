@@ -1,6 +1,6 @@
 # 分析层（可选）
 
-核心层（`bailu` 工具和知识库）不需要 Python。这一层是可选的：电价、负荷、出力的**基线预测**和**回测**，只用 pandas、numpy 和 matplotlib，依赖只装在本目录的 `.venv` 里，删掉本目录即可移除。`data-visualization` 技能画图时也用这个环境里的 matplotlib。
+可选分析层提供电价、负荷和出力的**基线预测**与**回测**，使用 pandas、numpy 和 matplotlib，依赖装在本目录的 `.venv`。`data-visualization` 技能也可以用这个环境绘图。
 
 ## 安装
 
