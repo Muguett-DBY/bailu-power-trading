@@ -32,7 +32,7 @@ import zipfile
 from pathlib import Path
 
 FRAMEWORK = Path(__file__).resolve().parent.parent
-VERSION = "0.2.0"
+VERSION = "0.2.1"
 # Where the prebuilt tool is taken from, in the order that suits most: the
 # mirror in mainland China first, then GitHub, then a content delivery network.
 # {file} is the name of what is fetched: the archive, or SHA256SUMS beside it.

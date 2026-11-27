@@ -11,7 +11,7 @@ It is taken out of Bailu.SI, a desktop assistant for electricity trading, which 
 Open a folder in any agent that can run commands and read and write files — Codex, Claude Code, WorkBuddy, Cursor, pi and others — and send it this, as it is:
 
 ```text
-Set this folder up as my electricity-trading workspace: clone the framework from Gitee (https://gitee.com/Muguett/bailu-power-trading.git , or from GitHub at https://github.com/Muguett-DBY/bailu-power-trading.git if that fails) into this folder (into the folder itself if it is empty, otherwise into ./bailu-power-trading/), read its AGENTS.md in full, then run python scripts/deploy.py inside the framework folder to deploy it; keep everything inside this folder, install nothing globally and change no file outside it; when the deployment is done tell me what it did, and if any step fails show me the error as it is instead of skipping it.
+Set this folder up as my electricity-trading workspace: clone the framework from Gitee (https://gitee.com/Muguett/bailu-power-trading.git , or from GitHub at https://github.com/Muguett-DBY/bailu-power-trading.git if that fails; clone with GIT_TERMINAL_PROMPT=0 and GCM_INTERACTIVE=never set, and treat a request to sign in as a failure) into this folder (into the folder itself if it is empty, otherwise into ./bailu-power-trading/), read its AGENTS.md in full, then run python scripts/deploy.py inside the framework folder to deploy it; keep everything inside this folder, install nothing globally and change no file outside it; when the deployment is done tell me what it did, and if any step fails show me the error as it is instead of skipping it.
 ```
 
 When it is done the agent tells you the deployment is complete and where the `bailu` tool is. From then on, every new session in this folder finds the rules in the project's `AGENTS.md`.
@@ -58,8 +58,8 @@ skills/
   data/                6 data skills (from anthropics/knowledge-work-plugins, anthropics/financial-services)
   UPSTREAM.md          Where the upstream skills come from, at which commit, under which licence
 knowledge/
-  handbook/            The handbook: 42 files, 810 topics
-  documents/           Official documents: 137 full texts; catalogue.csv lists them
+  handbook/            The handbook: 47 files, 892 topics
+  documents/           Official documents: 151 full texts; catalogue.csv lists them
   data/tariffs.txt     34 provincial transmission price tables, coal capacity prices
 tools/bailu/           The Go source and tests of the bailu tool
 analysis/              The optional analysis layer: baseline forecasts, back-tests
@@ -94,8 +94,8 @@ How each command is written is in `AGENTS.md`. To build from source (optional): 
 
 ## How far the knowledge base can be trusted
 
-- Every topic of the handbook has keywords and a line naming the document and provision it rests on. The research merged into it holds 3,005 quotes, each looked up word for word in a copy of the official document downloaded for the purpose and checked to lie under the provision cited; all matched.
-- The content comes from documents published by the National Development and Reform Commission, the National Energy Administration and its regional offices, and provincial authorities; checked on 27 November 2026. Nationally it covers the spot, medium- and long-term, settlement, retail, renewable and ancillary-service markets and market members; provincially it covers 山西、蒙东、辽宁、黑龙江、上海、江苏、浙江、安徽、福建、江西、河南、湖北、广东、广西、海南、重庆、贵州、云南、西藏、甘肃、青海、宁夏、新疆、南方区域. A provincial topic is named after its province, and says what it holds for and from when.
+- Every topic of the handbook has keywords and a line naming the document and provision it rests on. The research merged into it holds 3,314 quotes, each looked up word for word in a copy of the official document downloaded for the purpose and checked to lie under the provision cited; all matched. For 106 sentences the official document could not be fetched from here; its text was read through a reader, written down and checked against that, and the folder of each such source says so.
+- The content comes from documents published by the National Development and Reform Commission, the National Energy Administration and its regional offices, and provincial authorities; checked on 27 November 2026. Nationally it covers the spot, medium- and long-term, settlement, retail, renewable and ancillary-service markets and market members; provincially it covers 北京、天津、河北南网、冀北、山西、蒙东、辽宁、黑龙江、上海、江苏、浙江、安徽、福建、江西、山东、河南、湖北、广东、广西、海南、重庆、贵州、云南、西藏、甘肃、青海、宁夏、新疆、南方区域. A provincial topic is named after its province, and says what it holds for and from when. Jilin, Sichuan and Mengxi have one or two topics each and Hunan and Shaanxi none; Tianjin has 4 topics and Hebei-south 8, mostly the regional rules of North China and the numbers of provincial documents.
 - The document library under `knowledge/documents/` holds the full texts the handbook rests on; `bailu docs knowledge/documents "<question>"` searches them.
 - What is marked 【口径】 is practice of the trade without a document behind it, and the answer says so.
 - **What it does not have**: the hour-by-hour time-of-use prices of each province, fund surcharges, assessment rates that change often — and any live price. For these, put your province's current documents into the project and the agent answers from their text with `bailu docs`.
@@ -107,11 +107,14 @@ To add to or update the handbook, the pipeline is in `scripts/`: `fetch_cited_so
 
 **The deployment script** was tried end to end on a local copy of the release files: 20 checks passed. The tool is fetched and checked against SHA256SUMS; an archive with one byte changed is refused and the next address is used; the skills and the rule files land in the project; a second run keeps the record; the uninstall removes what was put there and keeps a rule file the user changed; `--skills-dir` has to be inside the project.
 
-**The tool's own tests**: 156 tests in `tools/bailu`, covering the arithmetic of the 13 calculators (each with a case worked by hand from the official document), reading numbers (jiao, fen and li among them), follow-ups, the provincial price tables, 190 handbook retrieval questions, the search for provisions in policy documents, the data check, the curve check, the ledger and the review, the risk figures; 10 tests of the deployment script and 9 of the analysis layer.
+**The one-sentence deployment** was tried as a user would: in an empty folder the sentence above was given to pi (model GLM-5.3-Flash) and nothing else. It cloned the framework, read `AGENTS.md`, ran `python scripts/deploy.py` and `bailu selfcheck`, and the 29 skills and the tool landed inside the folder with nothing installed globally. The Gitee mirror was private at the time, so the clone and the download fell back to GitHub by themselves. After the release the tool was fetched from jsDelivr and matched SHA256SUMS.
 
-**The knowledge**: each of the 3,005 quotes merged into the handbook was looked up word for word in a copy of the official document fetched from its address and checked to lie under the provision cited; all matched.
+**The tool's own tests**: 156 tests in `tools/bailu`, covering the arithmetic of the 13 calculators (each with a case worked by hand from the official document), reading numbers (jiao, fen and li among them), follow-ups, the provincial price tables, 205 handbook retrieval questions, the search for provisions in policy documents, the data check, the curve check, the ledger and the review, the risk figures; 10 tests of the deployment script and 9 of the analysis layer.
+
+**The knowledge**: each of the 3,314 quotes merged into the handbook was looked up word for word in a copy of the official document fetched from its address and checked to lie under the provision cited; all matched. For 106 sentences the document could not be fetched; they were checked against its text as read through a reader, as the section above says.
 
 **Not tested**: the prebuilt tool on Linux and macOS was built but not run. It comes from the same source and the same release as the Windows one; try it on your system and open an issue if something is wrong.
+
 ## Licence and thanks
 
 MIT, see [LICENSE](LICENSE). Upstream skills, adapted code and projects consulted are in [NOTICE.md](NOTICE.md):

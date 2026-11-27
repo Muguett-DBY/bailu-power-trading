@@ -1,6 +1,6 @@
 """Publish a release of the framework: tests, five builds, GitHub, jsDelivr and Gitee.
 
-    python scripts/publish.py v0.2.0
+    python scripts/publish.py v0.2.1
 
 Needs git, Go, the GitHub command line tool (signed in) and, for the mirror,
 the variable GITEE_TOKEN with a personal access token of the Gitee account
@@ -103,6 +103,10 @@ def assets() -> list:
 
 
 def github(version: str) -> None:
+    # A release that is there already is left as it is: a run that broke off is
+    # finished by running it again.
+    if subprocess.run(["gh", "release", "view", version], cwd=ROOT, capture_output=True).returncode == 0:
+        return
     run("gh", "release", "create", version, *[str(path) for path in assets()], "--title", f"bailu {version}",
         "--notes-file", str(OUT / "notes.md"))
 
@@ -129,36 +133,46 @@ def delivery_network(version: str) -> None:
     print("dist branch:", commit[:7])
 
 
+def gitee_call(token: str, path: str, data: bytes | None = None, content_type: str = "application/json", timeout: int = 60) -> object:
+    """One call to the API of the mirror; what it refuses is the message it answers."""
+    request = urllib.request.Request(GITEE_API + path, method="POST" if data else "GET", data=data,
+                                     headers={"Authorization": f"token {token}", "Content-Type": content_type})
+    try:
+        with urllib.request.urlopen(request, timeout=timeout) as response:
+            return json.loads(response.read())
+    except urllib.error.HTTPError as error:
+        raise SystemExit(f"Gitee did not take {path}: {error.code} {error.read().decode('utf-8', errors='replace')[:300]}")
+
+
 def gitee(version: str) -> None:
     token = os.environ.get("GITEE_TOKEN")
     if not token:
         print("GITEE_TOKEN is not set: the Gitee mirror was not updated.")
         return
     run("git", "push", "--force", "origin", "HEAD:refs/heads/main")
-    # Push to the mirror with the token in a helper, so that it is not kept.
+    # The token is given to this one push in a helper, so that it is not kept.
+    # The empty value before it clears the helpers set on the machine: one of
+    # them may ask for an account in a window of its own, and keep what it is
+    # given in the credential store.
     helper = "!f() { echo username=Muguett; echo password=$GITEE_TOKEN; }; f"
-    run("git", "-c", f"credential.helper={helper}", "push", GITEE + ".git", "HEAD:refs/heads/main")
-    request = urllib.request.Request(GITEE_API + "/releases", method="POST",
-                                    data=json.dumps({"tag_name": version, "name": f"bailu {version}",
-                                                     "body": (OUT / "notes.md").read_text(encoding="utf-8"),
-                                                     "target_commitish": "main"}).encode(),
-                                    headers={"Authorization": f"token {token}", "Content-Type": "application/json"})
-    try:
-        with urllib.request.urlopen(request, timeout=60) as response:
-            release = json.loads(response.read())
-    except urllib.error.HTTPError as error:
-        raise SystemExit(f"Gitee did not take the release {version}: {error.code} "
-                         f"{error.read().decode('utf-8', errors='replace')[:300]}")
+    run("git", "-c", "credential.helper=", "-c", f"credential.helper={helper}", "push", GITEE + ".git", "HEAD:refs/heads/main",
+        env={"GIT_TERMINAL_PROMPT": "0", "GCM_INTERACTIVE": "never"})
+    # The release is made once, and an attachment that is there already is left
+    # alone: a run that broke off is finished by running it again.
+    release = next((one for one in gitee_call(token, "/releases") if one.get("tag_name") == version), None)
+    if release is None:
+        release = gitee_call(token, "/releases", json.dumps({"tag_name": version, "name": f"bailu {version}",
+                                                           "body": (OUT / "notes.md").read_text(encoding="utf-8"),
+                                                           "target_commitish": "main"}).encode())
+    attached = {one["name"] for one in release.get("assets", [])}
     for path in assets():
+        if path.name in attached:
+            continue
         boundary = "----bailu-publish"
         body = (f"--{boundary}\r\nContent-Disposition: form-data; name=\"file\"; filename=\"{path.name}\"\r\n"
                 "Content-Type: application/octet-stream\r\n\r\n").encode() + path.read_bytes() + f"\r\n--{boundary}--\r\n".encode()
-        request = urllib.request.Request(f"{GITEE_API}/releases/{release['id']}/attach_files", data=body, method="POST",
-                                        headers={"Authorization": f"token {token}",
-                                                 "Content-Type": f"multipart/form-data; boundary={boundary}"})
-        with urllib.request.urlopen(request, timeout=300):
-            pass
-        print("gitee attached", path.name)
+        gitee_call(token, f"/releases/{release['id']}/attach_files", body, f"multipart/form-data; boundary={boundary}", 600)
+        print("gitee attached", path.name, flush=True)
 
 
 def main() -> None:

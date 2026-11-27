@@ -57,7 +57,16 @@ TITLE_END = re.compile(r"\s*(?:[_＿]|\||---|——|—\s*—|<br\s*/?>|\]\s*[-�
 NAMED = re.compile(r"细则|规则|通知|方案|办法|规定|机制|公告|指引|解读|结果|计划|函$")
 HEADING = re.compile(r"^\d*\s*第[一二三四五六七八九十]+[章条节]")
 # A line of the body that happens to end like a name: it begins mid-sentence or carries a comma.
-NOT_A_TITLE = re.compile(r"^[，。、；：则的和及为按照各（(]|.*(，|。|；).*")
+NOT_A_TITLE = re.compile(r"^[，。、；：则的和及为按照各（(]|.*(，|。|；).*|.*[：:]$")
+# A name that the text runs on from, into the first chapter or article.
+RUNS_ON = re.compile(r"第[一二三四五六七八九十百]+[章条]")
+# A table of contents opens with the name of what it lists.
+CONTENTS = re.compile(r"^(.{4,40}?)目录")
+# What a notice prints on one line that holds its whole text: the documents it
+# prints right after its issuer and number, or the name an authority gives its
+# own reading of a policy.
+PRINTED = re.compile(r"^.{0,60}?关于印发《[^》]{4,70}》(?:《[^》]{4,70}》)*(?:（[^）]{1,20}）)?的通知")
+CALLED = re.compile(r"^[^，。；：]{2,14}(?:委员会|能源局|监管办|监管局|人民政府)[^，。；：]{0,30}?(?:细则|规则|通知|方案|办法|规定|机制|公告|指引|解读)")
 DATE_IN_ADDRESS = re.compile(r"/(?:t|P0)?(20\d{2})(?:[-/]?)(\d{2})(?:[-/]?)(\d{2})(?:_|\.)")
 DATE_IN_TEXT = re.compile(r"(20\d{2}年\d{1,2}月\d{1,2}日|20\d{2}-\d{1,2}-\d{1,2})")
 CRUMB = re.compile(r"^(当前位置|所在位置|现在位置|您的位置|首页|首页 /|/ |政务公开$)")
@@ -118,13 +127,33 @@ def readable(line: str) -> bool:
 
 
 def title_of(text: str) -> str:
-    """The document's own name: the first of its first lines that reads as one."""
-    for line in text.splitlines()[:14]:
+    """The document's own name: the first of its first lines that reads as one,
+    cut where its first chapter starts; a table of contents is named by what it
+    lists. A text whose first line runs on from the name into the body is read
+    for the name it prints."""
+    lines = text.splitlines()
+    for number, line in enumerate(lines[:14]):
         line = SITE_PREFIX.sub("", TITLE_END.sub("", line)).strip()
+        if len(RUNS_ON.findall(line)) >= 2:
+            if contents := CONTENTS.match(line):
+                return contents.group(1)
+            continue
+        line = RUNS_ON.split(line, maxsplit=1)[0].strip()
+        # A name printed over two lines: the first does not end like one, nor
+        # like the letterhead of an authority.
+        following = lines[number + 1].strip() if number + 1 < len(lines) else ""
+        if line and len(line) < 20 and not line.endswith("文件") and not NAMED.search(line) and following \
+                and len(line) + len(following) <= 90 and not NOT_A_TITLE.match(following) and NAMED.search(line + following):
+            line += following
         if 5 <= len(line) <= 90 and readable(line) and not HEADING.match(line) and not CRUMB.match(line) \
                 and not STAMPED.match(line) and not NOT_A_TITLE.match(line):
             return line
-    return ""
+    opening = lines[0][:600] if lines else ""
+    printed = PRINTED.match(opening)
+    if printed:
+        return printed.group(0)[printed.group(0).index("关于印发"):]
+    called = CALLED.match(opening)
+    return re.sub(r"^附件\s*\d*\s*[:：]?\s*", "", called.group(0)) if called else ""
 
 
 def trimmed(text: str) -> str:
@@ -224,7 +253,7 @@ def main() -> None:
             (LIBRARY / place / file).write_text(head + text + "\n", encoding="utf-8", newline="\n")
             rows.append([f"{place}/{file}", name, place, kind, stamp, host, address, len(text)])
     with open(LIBRARY / "catalogue.csv", "w", encoding="utf-8", newline="\n") as out:
-        writer = csv.writer(out)
+        writer = csv.writer(out, lineterminator="\n")
         writer.writerow(["文件", "标题", "省份或区域", "类型", "日期", "站点", "来源", "字数"])
         writer.writerows(rows)
     print(len(rows), "documents in", len(numbers), "places;", dict(left))

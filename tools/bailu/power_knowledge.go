@@ -221,16 +221,20 @@ func (x *tokenIndex) rank(query string, limit int) ([]tokenMatch, int) {
 	// With a topic for every province, one of them keeps a quarter of its score
 	// when a topic of no place in particular holds a term of the question as
 	// specific as the rarest one it holds itself: the general topic then says
-	// what was asked for, and the provincial one adds how one province goes.
+	// what was asked for, and the provincial one adds how one province goes. The
+	// one whose title holds three terms of the question at least, half again
+	// more than the title of any topic of no place, keeps its half: what was
+	// asked for is said by that one alone, be it for one province.
 	if !named {
-		general := 0.0
+		general, generalTitle := 0.0, 0
 		for i, place := range x.regional {
 			if place == "" && results[i].score > 0 {
 				general = max(general, most[i])
+				generalTitle = max(generalTitle, inTitle[i])
 			}
 		}
 		for i, place := range x.regional {
-			if place != "" && most[i] <= general {
+			if place != "" && most[i] <= general && !(inTitle[i] >= 3 && 2*inTitle[i] >= 3*generalTitle) {
 				results[i].score *= placeShareUnnamed
 			}
 		}

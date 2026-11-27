@@ -15,10 +15,10 @@ there. An address already kept is not asked for again.
 Standard library only.
 """
 
+import http.client
 import json
 import re
 import sys
-import urllib.error
 import urllib.parse
 import urllib.request
 from html.parser import HTMLParser
@@ -127,7 +127,8 @@ def keep(url: str, folder: Path) -> str:
             continue
         try:
             attachment.write_bytes(fetch(target))
-        except (OSError, ValueError) as error:
+        except (OSError, ValueError, http.client.HTTPException) as error:
+            # A large attachment is sometimes cut off before its end.
             print(f"  not kept: {target} ({error})")
             attachment.unlink(missing_ok=True)
     return "page.txt"
@@ -148,7 +149,7 @@ def main() -> None:
         folder = KEPT / f"{len(index) + 1:03d}-{Path(urllib.parse.urlparse(url).path).name or 'index'}"
         try:
             kept = keep(url, folder)
-        except (OSError, urllib.error.URLError, ValueError) as error:
+        except (OSError, ValueError, http.client.HTTPException) as error:
             print(f"[{number}] not kept: {url} ({error})")
             continue
         index[url] = folder.name
