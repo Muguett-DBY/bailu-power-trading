@@ -246,6 +246,10 @@ def deploy(project: Path, skills: list, with_skills: bool, with_tool: bool, forc
     written = rules(project, framework, manifest.get("tool", ""))
     # A rule file an earlier run wrote and this one left in place is still the deployment's.
     manifest["files"] = written + [name for name in earlier.get("files", []) if name not in written and (project / name).is_file()]
+    # What each rule file held when it was written: one changed since is the user's by then.
+    manifest["hashes"] = {name: digest for name, digest in earlier.get("hashes", {}).items() if name in manifest["files"]}
+    for name in written:
+        manifest["hashes"][name] = digest_of(project / name)
     record.write_text(json.dumps(manifest, ensure_ascii=False, indent=2) + "\n", encoding="utf-8", newline="\n")
     if tool:
         print("自检：")
@@ -276,13 +280,25 @@ def uninstall(project: Path) -> None:
     for folder, names in skills.items():
         for name in names:
             shutil.rmtree(project / folder / name, ignore_errors=True)
+    hashes = manifest.get("hashes", {})
+    changed = []
     for name in manifest.get("files", []):
-        (project / name).unlink(missing_ok=True)
+        target = project / name
+        if name in hashes and target.is_file() and digest_of(target) != hashes[name]:
+            changed.append(name)
+            continue
+        target.unlink(missing_ok=True)
     shutil.rmtree(FRAMEWORK / ".bailu", ignore_errors=True)
     path.unlink()
     print("已移除部署时放入的技能、规则文件和工具；框架文件夹本身保留。")
+    if changed:
+        print("这些规则文件在部署之后被改动过，是项目自己的了，没有删除：" + "、".join(changed))
     if manifest.get("backups"):
         print("部署时改名保留的原有技能还在：" + "、".join(Path(one).name for one in manifest["backups"]))
+
+
+def digest_of(path: Path) -> str:
+    return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
 def main() -> None:
