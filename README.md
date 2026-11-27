@@ -22,7 +22,7 @@ agent 做完会告诉你「部署完成」和 `bailu` 工具的路径。之后�
 
 | 放进项目的东西 | 位置 | 作用 |
 | --- | --- | --- |
-| 技能 | `.agents/skills/`（或你的 agent 自己的技能目录） | 23 个技能，agent 按任务自动加载 |
+| 技能 | `.agents/skills/`（或你的 agent 自己的技能目录） | 29 个技能，agent 按任务自动加载 |
 | 规则 | 项目根目录的 `AGENTS.md`（Claude Code 另有 `CLAUDE.md` 指向它） | 告诉 agent 读框架的守则、`bailu` 在哪里 |
 | 框架 | `bailu-power-trading/` | 知识库、文件库、工具、脚本 |
 | 记录 | `.bailu-install.json` | 记下放入了什么，卸载时用 |
@@ -43,6 +43,7 @@ agent 做完会告诉你「部署完成」和 `bailu` 工具的路径。之后�
 | 分析交易平台的电价表：均价、最高最低、按月和按时段统计与比较、月度分析报告 | `bailu table`，技能 `monthly-price-report` |
 | 查本省政策文件的条款、核对电费账单 | `bailu docs`，技能 `policy-lookup`、`bill-review` |
 | 基线预测与回测：电价、负荷、出力的三种基线和滚动回测误差、预测区间；日前与实时的价差、日前申报比例、储能上界 | 分析层 `analysis/`（可选） |
+| 给一张表做画像、做统计分析、交付前复核、把结果画成图 | 技能 `explore-data`、`analyze`、`statistical-analysis`、`validate-data`、`data-visualization`、`clean-data-xls` |
 | 读写 Word、Excel、PowerPoint、PDF | 技能 `docx`、`xlsx`、`pptx`、`pdf` |
 | 做海报、演示、网页的设计 | 技能 `canvas-design`、`brand-guidelines`、`theme-factory`、`frontend-design`、`web-design-guidelines` |
 
@@ -64,6 +65,7 @@ skills/
   power-trading/       14 个电力交易技能
   office/              4 个办公技能（来自 anthropics/skills）
   design/              5 个设计技能
+  data/                6 个数据技能（来自 anthropics/knowledge-work-plugins、anthropics/financial-services）
   UPSTREAM.md          上游技能的来源、提交和许可证
 knowledge/
   handbook/            手册：31 个文件、625 个主题

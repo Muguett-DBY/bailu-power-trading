@@ -13,6 +13,15 @@
 | `design/theme-factory` | anthropics/skills · `skills/theme-factory` | `e4bb5d9` | Apache-2.0 |
 | `design/frontend-design` | anthropics/skills · `skills/frontend-design` | `e4bb5d9` | Apache-2.0 |
 | `design/web-design-guidelines` | [vercel-labs/agent-skills](https://github.com/vercel-labs/agent-skills) · `skills/web-design-guidelines` | `5a37a6329fbad3666c3207392a6a7c0110e92efb` | MIT（上游 README 所述） |
+| `data/explore-data` | [anthropics/knowledge-work-plugins](https://github.com/anthropics/knowledge-work-plugins) · `data/skills/explore-data` | `5e504ae11498` | Apache-2.0（`LICENSE.txt`） |
+| `data/analyze` | [anthropics/knowledge-work-plugins](https://github.com/anthropics/knowledge-work-plugins) · `data/skills/analyze` | `5e504ae11498` | Apache-2.0（`LICENSE.txt`） |
+| `data/statistical-analysis` | [anthropics/knowledge-work-plugins](https://github.com/anthropics/knowledge-work-plugins) · `data/skills/statistical-analysis` | `5e504ae11498` | Apache-2.0（`LICENSE.txt`） |
+| `data/validate-data` | [anthropics/knowledge-work-plugins](https://github.com/anthropics/knowledge-work-plugins) · `data/skills/validate-data` | `5e504ae11498` | Apache-2.0（`LICENSE.txt`） |
+| `data/data-visualization` | [anthropics/knowledge-work-plugins](https://github.com/anthropics/knowledge-work-plugins) · `data/skills/data-visualization` | `5e504ae11498` | Apache-2.0（`LICENSE.txt`） |
+| `data/clean-data-xls` | [anthropics/financial-services](https://github.com/anthropics/financial-services) · `plugins/vertical-plugins/financial-analysis/skills/clean-data-xls` | `3e32c2287dcb` | Apache-2.0（`LICENSE.txt`） |
+
+
+`data/` 下的五个技能开头有一行指向 `../../CONNECTORS.md` 的链接。那个文件在它们原来的插件目录里，是给连接了数仓的 agent 查占位符用的；单独使用时用不到，链接在这里失效。
 
 上游 README 在该提交处写明文档技能（docx、pdf、pptx、xlsx）同样是 Apache 2.0 开源的。
 

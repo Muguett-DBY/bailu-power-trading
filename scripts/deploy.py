@@ -42,7 +42,7 @@ DOWNLOADS = [
     "https://cdn.jsdelivr.net/gh/Muguett-DBY/bailu-power-trading@dist/{file}",
 ]
 MANIFEST = ".bailu-install.json"
-SKILL_GROUPS = ("power-trading", "office", "design")
+SKILL_GROUPS = ("power-trading", "office", "design", "data")
 # The folder each agent reads the skills of a project from, by a folder it
 # keeps in the project.
 CONVENTIONS = {".claude": ".claude/skills", ".cursor": ".cursor/skills", ".codebuddy": ".codebuddy/skills",

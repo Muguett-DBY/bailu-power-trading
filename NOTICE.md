@@ -10,6 +10,7 @@ The framework's own code and content are under the MIT License (`LICENSE`). It c
 
 - **anthropics/skills**（Anthropic）的 `docx`、`xlsx`、`pptx`、`pdf`、`canvas-design`、`brand-guidelines`、`theme-factory`、`frontend-design`：Apache License 2.0。每个技能目录里保留着上游的 `LICENSE.txt`；许可证全文另见 `licenses/Apache-2.0.txt`。
 - **vercel-labs/agent-skills**（Vercel）的 `web-design-guidelines`：MIT。上游 README 写明许可为 MIT，但未附许可文本与版权行；技能目录里的 `LICENSE.txt` 是 MIT 许可证的正文，并注明了来源。
+- **anthropics/knowledge-work-plugins**（Anthropic）的 `explore-data`、`analyze`、`statistical-analysis`、`validate-data`、`data-visualization`，和 **anthropics/financial-services**（Anthropic）的 `clean-data-xls`：Apache License 2.0；每个技能目录里的 `LICENSE.txt` 是其仓库许可证的全文，开头写明来源与提交。
 
 ## 改写自的代码 / Code adapted
 
@@ -38,4 +39,4 @@ Copyright 2026 GreenFlex contributors
 
 ## 分析层依赖的 Python 库 / Python libraries of the analysis layer
 
-`analysis/` 用到 pandas 和 numpy（都是 BSD-3-Clause），由 uv 装在项目的 `analysis/.venv` 里，不随本框架分发。
+`analysis/` 用到 pandas、numpy 和 matplotlib（都是 BSD 风格的许可），由 uv 装在项目的 `analysis/.venv` 里，不随本框架分发。

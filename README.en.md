@@ -22,7 +22,7 @@ The deployment is **self-contained**: everything stays in the folder. No global 
 
 | What lands in the project | Where | What it is for |
 | --- | --- | --- |
-| Skills | `.agents/skills/` (or your agent's own skills folder) | 23 skills the agent loads as the task needs |
+| Skills | `.agents/skills/` (or your agent's own skills folder) | 29 skills the agent loads as the task needs |
 | Rules | `AGENTS.md` at the project root (`CLAUDE.md` points to it for Claude Code) | Tells the agent to read the framework's rules and where `bailu` is |
 | Framework | `bailu-power-trading/` | Knowledge base, document library, tool, scripts |
 | Record | `.bailu-install.json` | What was added, for uninstalling |
@@ -43,6 +43,7 @@ Uninstall: run `python scripts/deploy.py --uninstall` in the framework folder. I
 | Analyse a price table from a trading platform: means, highs and lows, statistics and comparisons by month and by time of day, a monthly report | `bailu table`; skill `monthly-price-report` |
 | Find a provision in provincial policy documents; check a bill | `bailu docs`; skills `policy-lookup`, `bill-review` |
 | Baseline forecasts and back-tests: three baselines for prices, load and output with rolling back-test errors and intervals; day-ahead versus real-time spread, day-ahead declaration share, a battery's upper bound | The optional analysis layer `analysis/` |
+| Profile a table, analyse it statistically, check an analysis before it is shared, draw charts | Skills `explore-data`, `analyze`, `statistical-analysis`, `validate-data`, `data-visualization`, `clean-data-xls` |
 | Read and write Word, Excel, PowerPoint, PDF | Skills `docx`, `xlsx`, `pptx`, `pdf` |
 | Design posters, presentations and pages | Skills `canvas-design`, `brand-guidelines`, `theme-factory`, `frontend-design`, `web-design-guidelines` |
 
@@ -54,6 +55,7 @@ skills/
   power-trading/       14 power-trading skills
   office/              4 office skills (from anthropics/skills)
   design/              5 design skills
+  data/                6 data skills (from anthropics/knowledge-work-plugins, anthropics/financial-services)
   UPSTREAM.md          Where the upstream skills come from, at which commit, under which licence
 knowledge/
   handbook/            The handbook: 31 files, 625 topics

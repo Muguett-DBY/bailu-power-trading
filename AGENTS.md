@@ -109,6 +109,7 @@ bailu review [from=日期] [to=日期] [spot=实时价]
 
 - **电力交易**（14 个）：`spot-settlement` 现货结算、`deviation-assessment` 偏差考核、`contract-decomposition` 合约电量分解、`tou-tariff-bill` 分时电费与基本电费、`bill-review` 电费账单核对、`retail-package-comparison` 零售套餐比价与售电保本点、`storage-arbitrage-estimate` 储能与负荷平移收益、`monthly-price-report` 月度价格分析报告、`policy-lookup` 政策条款查询、`concept-explainer` 概念解释、`declaration-checklist` 申报与申报日志、`trading-ledger` 交易台账与档案、`trading-review` 交易复盘与持仓、`price-risk-check` 数据体检与风险监控。
 - **办公**（4 个，来自 anthropics/skills）：`docx`、`xlsx`、`pptx`、`pdf`。
+- **数据**（6 个，来自 anthropics/knowledge-work-plugins 和 anthropics/financial-services）：`explore-data` 给一张表做画像、`analyze` 分析流程、`statistical-analysis` 统计方法、`validate-data` 交付前复核、`data-visualization` 用 Python 画图、`clean-data-xls` 清洗导出的 Excel。它们是通用的数据工作方法：画像和复核按它们的步骤做；涉及电价、电费、风险指标的数字以 `bailu` 的输出为准，统计数字用 `bailu table`、`bailu risk` 或分析层得出。画图用分析层环境里的 matplotlib（`uv run --project analysis python <脚本>`）。
 - **设计**（5 个）：`canvas-design`、`brand-guidelines`、`theme-factory`、`frontend-design`（来自 anthropics/skills）、`web-design-guidelines`（来自 vercel-labs/agent-skills）。
 
 部署时把技能放进了你读取项目技能的目录，你会直接看到它们；否则到 `<框架目录>/skills/` 下读。
