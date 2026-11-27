@@ -105,8 +105,13 @@ To add to or update the handbook, the pipeline is in `scripts/`: `fetch_cited_so
 
 ## What was tested
 
+**The deployment script** was tried end to end on a local copy of the release files: 20 checks passed. The tool is fetched and checked against SHA256SUMS; an archive with one byte changed is refused and the next address is used; the skills and the rule files land in the project; a second run keeps the record; the uninstall removes what was put there and keeps a rule file the user changed; `--skills-dir` has to be inside the project.
 
+**The tool's own tests**: 156 tests in `tools/bailu`, covering the arithmetic of the 13 calculators (each with a case worked by hand from the official document), reading numbers (jiao, fen and li among them), follow-ups, the provincial price tables, 190 handbook retrieval questions, the search for provisions in policy documents, the data check, the curve check, the ledger and the review, the risk figures; 10 tests of the deployment script and 9 of the analysis layer.
 
+**The knowledge**: each of the 3,005 quotes merged into the handbook was looked up word for word in a copy of the official document fetched from its address and checked to lie under the provision cited; all matched.
+
+**Not tested**: the prebuilt tool on Linux and macOS was built but not run. It comes from the same source and the same release as the Windows one; try it on your system and open an issue if something is wrong.
 ## Licence and thanks
 
 MIT, see [LICENSE](LICENSE). Upstream skills, adapted code and projects consulted are in [NOTICE.md](NOTICE.md):
