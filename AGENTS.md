@@ -26,7 +26,7 @@ These are the project rules. Search trading material in Chinese. [English setup]
 
 ## 澄清需求
 
-先用用户已给的信息、项目资料和相关记忆消除歧义。可逆的小选择直接给出合理默认。确有会改变结论或交付的歧义时，加载 `skills/power-trading/clarify-request/SKILL.md`，优先只问一个关键问题。可枚举时给两到三个选项，推荐项放首位并说明影响。优先用项目 Pi 扩展 `bailu_ask_user`、Codex `request_user_input` 或 Claude Code `AskUserQuestion` 等可用工具。没有交互工具时用普通对话。依赖答案的工作等用户选择，其他工作可继续。
+先用用户已给的信息、项目资料和相关记忆消除歧义。可逆的小选择直接采用合理默认。确有会改变结论或交付的歧义时，按 `skills/power-trading/clarify-request/SKILL.md` 问一个关键问题。可枚举时给两到三个选项，首项推荐并说明影响。调用当前宿主在此模式下提供的原生提问工具，没有可用工具时用普通对话。依赖答案的工作等用户选择，其他工作可继续。
 
 ## 项目记忆
 

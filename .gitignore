@@ -19,7 +19,6 @@ __pycache__/
 /docs/research/work/
 /.npm-cache/
 /.agents/skills/
-/.pi/extensions/bailu-ask-user.ts
 
 # What scripts/publish.py builds
 /.release/

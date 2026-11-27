@@ -1,4 +1,5 @@
 import contextlib
+import hashlib
 import io
 import json
 import os
@@ -172,10 +173,14 @@ class UpdateTest(unittest.TestCase):
         self.assertEqual(handbook.read_bytes(), b"unsaved local edits\n")
 
     def test_failed_apply_restores_version_and_deployment(self):
-        self.write(self.remote / "integrations/pi/bailu-ask-user.ts", b"new extension")
-        self.new = self.commit("version with project extension")
-        extension = self.project / ".pi/extensions/bailu-ask-user.ts"
+        legacy = ".pi/extensions/bailu-ask-user.ts"
+        extension = self.project / legacy
         self.write(extension, b"previous extension")
+        recorded = json.loads(self.old_manifest)
+        recorded["files"] = [legacy]
+        recorded["hashes"] = {legacy: hashlib.sha256(b"previous extension").hexdigest()}
+        self.old_manifest = json.dumps(recorded).encode("utf-8")
+        self.write(self.manifest, self.old_manifest)
 
         def deploy(project, source, mirror, directories, *, no_skills, tool_origin=""):
             if no_skills:
@@ -183,7 +188,7 @@ class UpdateTest(unittest.TestCase):
                 return {"tool": f".bailu/bin/{self.exe}", "toolOrigin": "test"}
             self.write(self.manifest, b"new deployment record")
             self.write(self.skill, b"broken new copy")
-            self.write(extension, b"bad extension update")
+            extension.unlink()
             self.write(project / "CLAUDE.md", b"new rule")
             raise SystemExit("policy check failed")
 

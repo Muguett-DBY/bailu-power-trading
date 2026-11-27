@@ -16,14 +16,13 @@
 
 部署脚本从先可用的镜像浅克隆源码，克隆失败或超时就换另一个。工具和 SHA‑256 清单优先从源码镜像取，失败后依次尝试另一镜像和 jsDelivr。成功后会检查工具和政策库，并把工具路径写入项目根目录的 `.bailu-install.json`。
 
-部署需要 Git 和 Python 3.10+，用已有的 `python3`、`python` 或 Windows 的 `py -3` 即可。Windows、Linux 和 macOS 都有预编译工具。通过公开镜像部署无需仓库账号或 Go。Agent 如使用专用项目级技能目录，可以给脚本重复传 `--skills-dir`，例如 `--skills-dir .agents/skills --skills-dir .claude/skills`。
+部署需要 Git 和 Python 3.10+，用已有的 `python3`、`python` 或 Windows 的 `py -3` 即可。Windows、Linux 和 macOS 都有预编译工具。通过公开镜像部署无需仓库账号或 Go。可以重复传 `--skills-dir`。空项目可按所用宿主指定 `.agents/skills`（Codex）、`.codebuddy/skills`（WorkBuddy 的代码开发项目）、`.zcode/skills`（ZCode）或 `.claude/skills`（Claude Code）。项目已有相应宿主目录时，默认部署会一并放入对应的技能目录。
 
 部署是**绿色**的：所有东西都在当前文件夹里，不装全局软件、不改项目之外的任何文件。
 
 | 放进项目的东西 | 位置 | 作用 |
 | --- | --- | --- |
 | 技能 | `.agents/skills/`（或你的 agent 自己的技能目录） | 32 个技能，agent 按任务加载 |
-| Pi 项目扩展 | `.pi/extensions/bailu-ask-user.ts` | 给当前项目提供交互提问工具 |
 | 规则 | 项目根目录的 `AGENTS.md`（Claude Code 另有 `CLAUDE.md` 指向它） | 告诉 agent 读框架的守则、`bailu` 在哪里 |
 | 框架 | 项目根目录或 `bailu-power-trading/` | 手册、官方文件库、ECNote 快照、工具、脚本 |
 | 记录 | `.bailu-install.json` | 记下放入了什么，卸载时用 |
@@ -40,6 +39,8 @@
 
 已安装 v0.3.0 或更新版时，也可以在框架目录运行 `python scripts/bootstrap.py --project <项目根目录> --check-update`，应用更新时把最后一个参数换成 `--update`。v0.3.1 的脚本会比较公开镜像可用的提交，两边一致时优先此前部署的镜像，历史分叉时报告两边提交。升级先在临时工作树校验工具和知识库，再快进应用。部署文件的备份位于框架目录下的 `.bailu/update-backups/`，应用失败时恢复原部署。
 
+升级会把上版部署且内容未改动的旧提问扩展移出加载目录。自编或改过的扩展由项目维护。若已手动同步源码，可在框架目录运行 `python scripts/deploy.py --project <项目根目录>` 刷新部署。
+
 ## 项目记忆
 
 从 v0.4.0 起，在项目对话里说「以后结算简报先给结论」或「纠正一下，本项目总表的购电量在 C 列」，支持项目规则和工具调用的 Agent 会按 `project-memory` 技能记录。后来再次处理同类任务时会按需查询。再次纠正同一事项时更新原记录。也可以直接问「这个项目记住了什么」或说「忘掉结算简报格式」。
@@ -50,7 +51,7 @@
 
 遇到会明显改变结论或交付的歧义时，Agent 用 `clarify-request` 技能优先确认一个关键问题。适合做选择时给两到三个选项，推荐项放首位并说明影响。地区、账期、金额等事实根据已有资料确认，资料不足就直接问。容易调整的小决定由 Agent 按当前任务推进。
 
-部署会把 `bailu_ask_user` 放进项目自己的 `.pi/extensions/`。Pi 在有交互界面并允许加载项目扩展时显示选项，也允许自行填写。其他 Agent 可使用自己的提问界面，缺少界面时用普通对话。取消不会自动采用推荐项。项目扩展不改变 Pi 程序或用户级配置。
+提问使用宿主当前模式已经开放的原生入口。WorkBuddy、Codex、ZCode 和 Claude Code 各自按可用工具与参数呈现选项。当前模式缺少提问工具时，Agent 在普通对话发送同样的问题和推荐选项。用户取消时，该选择继续待确认。
 
 ## 能做什么
 
@@ -105,7 +106,6 @@ knowledge/
 tools/bailu/           bailu 工具的 Go 源码和测试
 analysis/              可选的分析层：基线预测、回测
 office/                可选的办公层：按位置读原文、跨格式交付
-integrations/pi/       项目级提问扩展及模拟测试
 scripts/
   bootstrap.py         跨镜像部署、检查更新和升级
   deploy.py            部署与卸载
@@ -161,7 +161,7 @@ LICENSE  NOTICE.md     MIT；第三方声明
 
 v0.4.0 增加了项目记忆回归，覆盖保存、同一主题更新、隔离、删除与升级后保留。
 
-提问工具可用 Node.js 22.18+ 运行 `node --test integrations/pi/bailu-ask-user.test.mjs` 模拟验证选择、自填、取消和普通对话回退。部署测试覆盖安装、更新、回滚和卸载时的项目范围。
+部署测试覆盖通用澄清技能的安装、已有宿主技能目录、旧扩展迁移，以及用户文件保留与升级回滚。
 
 v0.3.1 覆盖双镜像选版、交易复盘及公式证据。同日计量按电量加权，日前成交与同方向申报只计一次。对账区分业务数据缺失和公式无可用缓存。发布流程运行 Go、部署、办公与分析测试。
 

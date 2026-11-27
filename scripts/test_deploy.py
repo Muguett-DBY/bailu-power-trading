@@ -142,43 +142,69 @@ class DeploymentTest(unittest.TestCase):
         self.assertTrue(local.is_file())
         self.assertEqual(memory.read_text(encoding="utf-8"), '{"key":"report style","value":"decision first"}')
 
-    def test_pi_extension_follows_the_project_deployment_and_preserves_local_edits(self):
+    def test_clarification_skill_installs_for_the_projects_agent_directories(self):
         project = self.home / "project"
-        framework = self.framework_at(project / "bailu-power-trading")
-        source = framework / self.deploy.PI_SUPPORT
-        source.parent.mkdir(parents=True)
-        source.write_bytes(b"owned extension v1")
-        target = project / self.deploy.PI_EXTENSION
+        self.framework_at(project / "bailu-power-trading", skills=("clarify-request",))
+        for directory in (".codebuddy", ".zcode", ".claude"):
+            (project / directory).mkdir()
+        record = self.deploy_into(project)
+        self.assertEqual(set(record["skills"]), {".agents/skills", ".codebuddy/skills", ".zcode/skills", ".claude/skills"})
+        for directory in record["skills"]:
+            self.assertTrue((project / directory / "clarify-request/SKILL.md").is_file())
+        self.assertFalse((project / ".pi").exists())
+
+    def test_redeploy_archives_the_unchanged_legacy_extension(self):
+        project = self.home / "project"
+        self.framework_at(project / "bailu-power-trading")
+        name = self.deploy.LEGACY_QUESTION_EXTENSION
+        target = project / name
         target.parent.mkdir(parents=True)
+        target.write_bytes(b"prior deployment")
         settings = project / ".pi" / "settings.json"
         settings.write_bytes(b"{\"local\":true}")
+        record = {"framework": "bailu-power-trading", "files": [name],
+                  "hashes": {name: self.deploy.digest_of(target)}}
+        (project / self.deploy.MANIFEST).write_text(json.dumps(record), encoding="utf-8")
 
-        record = self.deploy_into(project, with_skills=False)
-        self.assertNotIn(self.deploy.PI_EXTENSION, record["files"])
+        result = self.deploy_into(project, with_skills=False)
+        self.assertNotIn(name, result["files"])
+        self.assertNotIn(name, result["hashes"])
         self.assertFalse(target.exists())
-        record = self.deploy_into(project)
-        self.assertIn(self.deploy.PI_EXTENSION, record["files"])
-        self.assertEqual(target.read_bytes(), b"owned extension v1")
-        source.write_bytes(b"owned extension v2")
-        self.deploy_into(project)
-        self.assertEqual(target.read_bytes(), b"owned extension v2")
-        target.write_bytes(b"user edited extension")
-        self.deploy_into(project)
-        self.quietly(self.deploy.uninstall, project)
-        self.assertEqual(target.read_bytes(), b"user edited extension")
+        backup, original = next(iter(result["backups"].items()))
+        self.assertEqual(original, name)
+        self.assertEqual((project / backup).read_bytes(), b"prior deployment")
         self.assertEqual(settings.read_bytes(), b"{\"local\":true}")
 
-    def test_uninstall_only_removes_its_owned_pi_extension(self):
+    def test_redeploy_and_uninstall_preserve_edited_or_unowned_legacy_extensions(self):
+        name = self.deploy.LEGACY_QUESTION_EXTENSION
+        for case, files, hashes in (("edited", [name], {name: hashlib.sha256(b"original").hexdigest()}),
+                                    ("hashless", [name], {}), ("unowned", [], {})):
+            with self.subTest(case=case):
+                project = self.home / case
+                self.framework_at(project / "bailu-power-trading")
+                target = project / name
+                target.parent.mkdir(parents=True)
+                target.write_bytes(b"project-owned extension")
+                record = {"framework": "bailu-power-trading", "files": files, "hashes": hashes}
+                (project / self.deploy.MANIFEST).write_text(json.dumps(record), encoding="utf-8")
+                result = self.deploy_into(project)
+                self.assertNotIn(name, result["files"])
+                self.assertNotIn(name, result["hashes"])
+                self.quietly(self.deploy.uninstall, project)
+                self.assertEqual(target.read_bytes(), b"project-owned extension")
+
+    def test_uninstall_understands_an_older_manifest_with_unchanged_legacy_file(self):
         project = self.home / "project"
-        framework = self.framework_at(project / "bailu-power-trading")
-        source = framework / self.deploy.PI_SUPPORT
-        source.parent.mkdir(parents=True)
-        source.write_bytes(b"extension")
-        target = project / self.deploy.PI_EXTENSION
+        self.framework_at(project / "bailu-power-trading")
+        name = self.deploy.LEGACY_QUESTION_EXTENSION
+        target = project / name
         target.parent.mkdir(parents=True)
+        target.write_bytes(b"prior deployment")
         other = target.with_name("another-extension.ts")
         other.write_bytes(b"another extension")
-        self.deploy_into(project)
+        record = {"framework": "bailu-power-trading", "files": [name],
+                  "hashes": {name: self.deploy.digest_of(target)}}
+        (project / self.deploy.MANIFEST).write_text(json.dumps(record), encoding="utf-8")
         self.quietly(self.deploy.uninstall, project)
         self.assertFalse(target.exists())
         self.assertEqual(other.read_bytes(), b"another extension")

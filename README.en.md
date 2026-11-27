@@ -25,7 +25,6 @@ The deployment is **self-contained**: everything stays in the folder. No global 
 | What lands in the project | Where | What it is for |
 | --- | --- | --- |
 | Skills | `.agents/skills/` (or your agent's own skills folder) | 32 skills the agent loads as needed |
-| Pi project extension | `.pi/extensions/bailu-ask-user.ts` | An interactive question tool for the current project |
 | Rules | `AGENTS.md` at the project root (`CLAUDE.md` points to it for Claude Code) | Tells the agent to read the framework's rules and where `bailu` is |
 | Framework | Project root or `bailu-power-trading/` | Handbook, official documents, ECNote snapshot, tool, scripts |
 | Record | `.bailu-install.json` | What was added, for uninstalling |
@@ -50,7 +49,9 @@ Records live in the workspace's `.bailu-memory/` directory, which normal Git ope
 
 ## Clarifying a request
 
-The `clarify-request` skill asks one consequential question by default. When a decision has clear alternatives, it offers two or three and explains the first recommendation. Questions about market facts depend on evidence. The project-local Pi extension supplies `bailu_ask_user` when the host has a UI and allows project extensions. Other agents can use their native question tools or ask in chat. Closing the dialog leaves the decision open.
+The `clarify-request` skill asks one consequential question by default. When a decision has clear alternatives, it offers two or three and explains the first recommendation. Questions about market facts depend on evidence. WorkBuddy, Codex, ZCode and Claude Code can use their own question tools whenever their current mode exposes one. Ordinary chat carries the same choices when a question tool is unavailable. Closing a dialog leaves the decision open.
+
+Upgrading archives a previous Bailu-installed question extension when its contents still match the deployment record. Custom or edited files stay in the project. If you already pulled the source manually, run `python scripts/deploy.py --project <project root>` from the framework directory to refresh the deployment.
 
 ## What it does
 
@@ -94,7 +95,6 @@ knowledge/
 tools/bailu/           The Go source and tests of the bailu tool
 analysis/              The optional analysis layer: baseline forecasts, back-tests
 office/                Optional file readers and cross-format reporting
-integrations/pi/       Project-local question tool and mock tests
 scripts/
   bootstrap.py         Deploy and upgrade from the public mirrors
   deploy.py            Deploy and uninstall
@@ -146,7 +146,7 @@ To add to or update the handbook, the pipeline is in `scripts/`: `fetch_cited_so
 
 v0.4.0 tests recording, updating, isolating, removing and retaining project memory through a framework upgrade.
 
-Run `node --test integrations/pi/bailu-ask-user.test.mjs` on Node.js 22.18+ to exercise the question tool against a mock UI. Deployment tests cover the project extension's installation, replacement, rollback and removal.
+Deployment tests cover the host-neutral clarification skill, existing host skill directories, legacy extension retirement, retention of project edits, and rollback.
 
 v0.3.1 adds coverage for comparing mirror revisions, volume-weighted metering, confirmed day-ahead fills, strict data validation, and the source and cache state of settlement formulas.
 
