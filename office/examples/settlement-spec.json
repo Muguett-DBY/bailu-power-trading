@@ -1,0 +1,26 @@
+{
+  "sheet": "月度汇总",
+  "header_row": 1,
+  "workbook_period": "月份",
+  "pdf_period": "结算月份",
+  "fields": [
+    {
+      "name": "购电侧结算电量",
+      "workbook_column": "购电量",
+      "pdf_label": "结算电量",
+      "workbook_unit": "MWh",
+      "pdf_unit": "kWh",
+      "unit": "MWh",
+      "tolerance": "0.001"
+    },
+    {
+      "name": "结算金额",
+      "workbook_column": "结算金额",
+      "pdf_label": "应付金额",
+      "workbook_unit": "元",
+      "pdf_unit": "元",
+      "unit": "元",
+      "tolerance": "0.01"
+    }
+  ]
+}

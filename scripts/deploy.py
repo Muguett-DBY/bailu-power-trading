@@ -35,7 +35,7 @@ import zipfile
 from pathlib import Path
 
 FRAMEWORK = Path(__file__).resolve().parent.parent
-VERSION = "0.2.2"
+VERSION = "0.3.0"
 # The default order for a direct install. The bootstrap prefers the mirror
 # that served the source, and leaves the other mirror and CDN as fallbacks.
 # {file} is the name of what is fetched: the archive, or SHA256SUMS beside it.
@@ -127,9 +127,14 @@ def install_tool(force: bool) -> tuple:
     the version the framework is at."""
     exe = "bailu.exe" if sys.platform == "win32" else "bailu"
     built = FRAMEWORK / "tools" / "bailu" / exe
-    if not force and built.is_file() and matches_version(built):
+    verified_origin = os.environ.get("BAILU_UPDATE_TOOL_ORIGIN")
+    if not verified_origin and not force and built.is_file() and matches_version(built):
         return built, "本机构建"
     placed = inside(FRAMEWORK, FRAMEWORK / ".bailu" / "bin" / exe)
+    if verified_origin:
+        if not matches_version(placed):
+            raise SystemExit("已验收的升级工具缺失或版本不符。")
+        return placed, verified_origin
     if placed.is_file() and not force and matches_version(placed):
         return placed, "之前放入的"
     placed.parent.mkdir(parents=True, exist_ok=True)

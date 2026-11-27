@@ -11,6 +11,7 @@ archives go SHA256SUMS, which scripts/deploy.py checks an archive against
 before it runs it, and the notices of the Go modules built into the tool.
 """
 
+from concurrent.futures import ThreadPoolExecutor
 import hashlib
 import json
 import os
@@ -204,14 +205,17 @@ def gitee(version: str, commit: str, token: str) -> None:
                                                            "body": (OUT / "notes.md").read_text(encoding="utf-8"),
                                                            "target_commitish": "main"}).encode())
     attached = {one["name"] for one in release.get("assets", [])}
-    for path in assets():
-        if path.name in attached:
-            continue
+
+    def attach(path):
         boundary = "----bailu-publish"
         body = (f"--{boundary}\r\nContent-Disposition: form-data; name=\"file\"; filename=\"{path.name}\"\r\n"
                 "Content-Type: application/octet-stream\r\n\r\n").encode() + path.read_bytes() + f"\r\n--{boundary}--\r\n".encode()
         gitee_call(token, f"/releases/{release['id']}/attach_files", body, f"multipart/form-data; boundary={boundary}", 600)
         print("gitee attached", path.name, flush=True)
+
+    with ThreadPoolExecutor(max_workers=3) as uploads:
+        # Each attachment is a separate request. Wait for all and surface upload failures.
+        list(uploads.map(attach, [path for path in assets() if path.name not in attached]))
 
 
 def main() -> None:
@@ -230,8 +234,9 @@ def main() -> None:
     run(sys.executable, "-m", "unittest", "discover", "-s", "scripts", "-p", "test_*.py")
     archives = build(version[1:])
     commit = ensure_tag(version)
-    run("git", "push", "--atomic", GITHUB + ".git", f"{commit}:refs/heads/main", f"refs/tags/{version}")
+    run("git", "push", GITHUB + ".git", f"refs/tags/{version}")
     github(version)
+    run("git", "push", GITHUB + ".git", f"{commit}:refs/heads/main")
     gitee(version, commit, token)
     delivery_network(version)
     print("published", version, ":", ", ".join(path.name for path in assets()), f"({len(archives)} archives)")

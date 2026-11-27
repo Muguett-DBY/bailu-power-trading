@@ -45,6 +45,22 @@ class PublishTest(unittest.TestCase):
                 publish.ensure_tag("v0.0.1")
         self.assertEqual(git.call_count, 2)
 
+    def test_gitee_only_attaches_the_files_missing_from_the_release(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            paths = [Path(temporary) / name for name in ("present.zip", "missing.zip", "SHA256SUMS")]
+            for path in paths:
+                path.write_bytes(path.name.encode())
+            release = {"id": 7, "assets": [{"name": paths[0].name}]}
+            with patch.object(publish, "assets", return_value=paths), patch.object(publish, "run"), patch.object(
+                publish, "gitee_call", return_value=release
+            ) as api:
+                publish.gitee("v0.0.1", "commit", "token")
+            uploads = api.call_args_list[1:]
+            self.assertEqual(len(uploads), 2)
+            self.assertTrue(all(call.args[1] == "/releases/7/attach_files" for call in uploads))
+            self.assertCountEqual([call.args[2].split(b'filename="')[1].split(b'"')[0] for call in uploads],
+                                  [b"missing.zip", b"SHA256SUMS"])
+
 
 if __name__ == "__main__":
     unittest.main()

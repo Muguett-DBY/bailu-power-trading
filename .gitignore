@@ -23,4 +23,5 @@ __pycache__/
 
 # The optional analysis layer keeps its environment inside the project.
 analysis/.venv/
+office/.venv/
 __pycache__/

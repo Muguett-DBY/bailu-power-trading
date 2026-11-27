@@ -8,9 +8,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"slices"
-	"strconv"
 	"strings"
-	"time"
 )
 
 // The archive supplies publication metadata and document text. Its dates and
@@ -30,14 +28,16 @@ var policyID = regexp.MustCompile(`^[A-Za-z0-9_-]+$`)
 
 func policyCommand(o options, out io.Writer) error {
 	if len(o.words) == 0 {
-		return fmt.Errorf("请选择 bailu policy search 或 bailu policy show")
+		return fmt.Errorf("请选择 bailu policy search、bailu policy show 或 bailu policy official")
 	}
 	var allowed []string
 	switch o.words[0] {
+	case "official":
+		return officialPolicies(o, out)
 	case "search":
-		allowed = []string{"archive", "province", "category", "status", "published-by", "text", "limit"}
+		allowed = []string{"archive", "province", "category", "status", "published-by", "text", "limit", "as-of"}
 	case "show":
-		allowed = []string{"archive"}
+		allowed = []string{"archive", "as-of"}
 		if len(o.words) < 2 || !policyID.MatchString(o.words[1]) {
 			return fmt.Errorf("bailu policy show 需要有效的文档 ID")
 		}
@@ -47,13 +47,24 @@ func policyCommand(o options, out io.Writer) error {
 	if err := o.only(allowed...); err != nil {
 		return err
 	}
+	asOf, err := policyDate(o, "as-of")
+	if err != nil {
+		return err
+	}
 	archive := o.flag("archive", "")
+	var registry policyRegistry
 	if archive == "" {
 		home, err := frameworkDir(o.home)
 		if err != nil {
 			return err
 		}
 		archive = filepath.Join(home, "knowledge", "ecnote")
+		registry, err = readPolicyRegistry(home)
+		if err != nil {
+			return err
+		}
+	} else if asOf != "" {
+		return fmt.Errorf("--as-of 需要框架自带的官方政策目录，去掉 --archive 或使用 bailu policy official")
 	}
 	root, err := os.OpenRoot(archive)
 	if err != nil {
@@ -68,29 +79,29 @@ func policyCommand(o options, out io.Writer) error {
 	if err := json.Unmarshal(data, &records); err != nil {
 		return fmt.Errorf("解析政策库目录：%w", err)
 	}
+	verified := registry.byArchiveID()
 	if o.words[0] == "show" {
 		for _, record := range records {
 			if record.ID == o.words[1] {
-				return showPolicy(root, record, strings.Join(o.words[2:], " "), out)
+				return showPolicy(root, record, strings.Join(o.words[2:], " "), verified[record.ID], asOf, out)
 			}
 		}
 		return fmt.Errorf("政策库里没有文档 %s", o.words[1])
 	}
-	return searchPolicies(root, records, o, out)
+	return searchPolicies(root, records, o, verified, asOf, out)
 }
 
-func searchPolicies(root *os.Root, records []policyRecord, o options, out io.Writer) error {
-	limit, err := strconv.Atoi(o.flag("limit", "8"))
-	if err != nil || limit < 1 || limit > 50 {
-		return fmt.Errorf("--limit 需要 1 到 50 之间的整数")
+func searchPolicies(root *os.Root, records []policyRecord, o options, verified map[string]officialPolicy, asOf string, out io.Writer) error {
+	limit, err := policyLimit(o)
+	if err != nil {
+		return err
 	}
 	province, category, status := o.flag("province", ""), o.flag("category", ""), o.flag("status", "")
-	before, phrase := o.flag("published-by", ""), o.flag("text", "")
-	if before != "" {
-		if _, err := time.Parse(time.DateOnly, before); err != nil {
-			return fmt.Errorf("--published-by 需要 YYYY-MM-DD 日期")
-		}
+	before, err := policyDate(o, "published-by")
+	if err != nil {
+		return err
 	}
+	phrase := o.flag("text", "")
 	query := strings.TrimSpace(strings.Join(o.words[1:], " "))
 	candidates := make([]policyRecord, 0, len(records))
 	for _, record := range records {
@@ -117,20 +128,24 @@ func searchPolicies(root *os.Root, records []policyRecord, o options, out io.Wri
 	})
 	if query != "" {
 		var exact, remaining []policyRecord
-		var indexed []tokenWeights
 		for _, record := range candidates {
 			if strings.EqualFold(query, record.ID) || record.Number != "" && query == record.Number {
 				exact = append(exact, record)
-				continue
+			} else {
+				remaining = append(remaining, record)
 			}
-			remaining = append(remaining, record)
-			indexed = append(indexed, indexTokens([]weightedText{
-				{record.Title, 3}, {record.Number, 2}, {record.Category, 1}, {record.Publisher, 1}, {record.Province, 0.5},
-			}))
 		}
 		candidates = exact
-		for _, i := range newTokenIndex(indexed...).search(query, limit, 0.5) {
-			candidates = append(candidates, remaining[i])
+		if slots := limit - len(exact); slots > 0 {
+			indexed := make([]tokenWeights, 0, len(remaining))
+			for _, record := range remaining {
+				indexed = append(indexed, indexTokens([]weightedText{
+					{record.Title, 3}, {record.Number, 2}, {record.Category, 1}, {record.Publisher, 1}, {record.Province, 0.5},
+				}))
+			}
+			for _, i := range newTokenIndex(indexed...).search(query, slots, 0.5) {
+				candidates = append(candidates, remaining[i])
+			}
 		}
 	}
 	var result strings.Builder
@@ -141,6 +156,11 @@ func searchPolicies(root *os.Root, records []policyRecord, o options, out io.Wri
 	for _, record := range candidates[:min(limit, len(candidates))] {
 		fmt.Fprintf(&result, "\n- %s（%s）\n  %s｜%s｜%s｜%s｜%s\n", record.Title, record.ID,
 			record.Province, record.Category, record.Date, record.Status, record.Number)
+		if official, ok := verified[record.ID]; ok {
+			fmt.Fprintf(&result, "  官方版本 %s｜%s\n  %s\n", official.Province, official.status(asOf), official.SourceURL)
+		} else if asOf != "" {
+			result.WriteString("  官方版本未核验\n")
+		}
 	}
 	_, err = io.WriteString(out, result.String())
 	return err
@@ -169,14 +189,20 @@ func readPolicy(root *os.Root, id string) (source, body string, err error) {
 	return source, strings.TrimSpace(body), nil
 }
 
-func showPolicy(root *os.Root, record policyRecord, query string, out io.Writer) error {
+func showPolicy(root *os.Root, record policyRecord, query string, official officialPolicy, asOf string, out io.Writer) error {
 	source, body, err := readPolicy(root, record.ID)
 	if err != nil {
 		return err
 	}
 	var result strings.Builder
-	fmt.Fprintf(&result, "【%s】\n文档 ID %s\n目录日期 %s｜收录标签 %s｜发布者 %s｜文号 %s\n镜像来源 %s\n适用版本以发布机关原文为准。\n\n",
+	fmt.Fprintf(&result, "【%s】\n文档 ID %s\n目录日期 %s｜收录标签 %s｜发布者 %s｜文号 %s\n镜像来源 %s\n",
 		record.Title, record.ID, record.Date, record.Status, record.Publisher, record.Number, source)
+	if official.ID != "" {
+		official.writeEvidence(&result, asOf)
+	} else {
+		result.WriteString("官方版本未核验。适用版本以发布机关原文为准。\n")
+	}
+	result.WriteByte('\n')
 	if strings.TrimSpace(query) == "" {
 		result.WriteString(body)
 	} else {
