@@ -1,43 +1,51 @@
-# Bailu for Office Work and Electricity Trading
+# Bailu Electricity Trading Agent Framework
 
-[简体中文](README.md)
+**A project workspace for power-market data, policy evidence, and office deliverables.**
 
-Bailu gives WorkBuddy, Codex, ZCode, Claude Code and other agents project skills, Chinese electricity-market policy sources, trading workflows and office scripts. Deployment uses the existing Git and Python 3.10+ on the host.
+[简体中文](README.md) · [Agent hosts](docs/agent-hosts.md) · [Trading workflows](docs/trading-workflows.md) · [Knowledge archive](knowledge/ecnote/README.md)
+
+Bailu gives your agent project rules, reusable skills, Chinese electricity-market policies and reproducible Python tools. It works with local data and public read-only sources, keeps an evidence trail, and prepares declaration drafts for human review.
 
 ## Deploy in one prompt
 
-Open the project folder in your agent and paste the prompt below. The same prompt works with either mirror.
+Open the destination project in your agent and paste the prompt below.
 
-```text
-Set up the current folder as a Bailu electricity-trading workspace. Record the current folder's absolute path. Download https://raw.githubusercontent.com/Muguett-DBY/bailu-power-trading/main/scripts/bootstrap.py to a temporary file inside the project. If it fails, times out or returns HTML, try https://gitee.com/Muguett/bailu-power-trading/raw/main/scripts/bootstrap.py . Limit each download to 15 seconds. Verify that the file is Python source and run it with the existing Python 3.10+, passing --project and the absolute project path and --mirror github or --mirror gitee to match the successful download. For WorkBuddy, ZCode or Claude Code, add --skills-dir .agents/skills and the matching --skills-dir .codebuddy/skills, --skills-dir .zcode/skills or --skills-dir .claude/skills. Read the project's AGENTS.md after deployment and report the skill directory and knowledge checks. Keep writes inside the project and report the actual errors if both mirrors fail.
+```
+Set up the current folder as a Bailu electricity-trading workspace. Download https://raw.githubusercontent.com/Muguett-DBY/bailu-power-trading/main/scripts/bootstrap.py to a temporary file within the project. If it fails, takes over 15 seconds, or returns a web page, use https://gitee.com/Muguett/bailu-power-trading/raw/main/scripts/bootstrap.py . Verify that the file is Python source. Run it with the existing Git and Python 3.10+ using --project and the absolute path, --mirror github or gitee to match the successful download, and --host if appropriate, such as workbuddy, codex, claude-code, zcode or opencode. Read the project rules and report the installed skill paths and knowledge checks. Keep writes inside this project.
 ```
 
-The installer copies the source and data from GitHub or Gitee, verifies the handbook and policy archive, and installs project rules and skills. It records the installation in `.bailu-install.json`. Skills go into `.agents/skills/` and any additional project skill directories. Optional Python packages for the office and analysis scripts are managed by uv inside the project.
-
-## Update an existing project
-
-Tell your agent to “update the framework.” For the first upgrade from an old installation, have the agent download the current `bootstrap.py` using the URLs above. Run it with `--project <absolute project path> --check-update`, then use `--update` to apply an available update.
-
-The updater compares the two mirrors, tests the candidate in a temporary worktree and fast-forwards after the checks pass. Migration retires the old installer-managed binary and retains user edits and project memory. The framework's `.bailu/update-backups/` directory contains rollback files. To uninstall, run `python scripts/deploy.py --uninstall --project <absolute project path>` from the framework directory.
+The shared skill location is `.agents/skills/`. Use `--host` to add a host-specific location when needed. Hosts that can read local files can also load a skill explicitly through its `SKILL.md`. See [host setup and discovery](docs/agent-hosts.md).
 
 ## Workflows
 
+```mermaid
+flowchart LR
+    A["Local files and public sources"] --> B["Validate data and applicable rules"]
+    B --> C["Forecast baselines and scenarios"]
+    C --> D["Draft declaration and evidence log"]
+    D --> E["Human review, settlement, and review"]
+    E --> F["Project memory"]
+```
+
 | Task | Entry point |
 | --- | --- |
-| Market rules, tariffs and policy versions | `policy-lookup`, `concept-explainer`, the handbook, official documents, tariff tables and verified version registry |
-| Settlement, deviation, contract allocation, costs and storage | Trading skills with formulas, field requirements and unit rules |
-| Reconciliation, declarations and trade records | `bill-review`, `declaration-checklist`, `trading-ledger`, `trading-review` |
-| Price reporting, risk, forecast baselines and backtests | `monthly-price-report`, `price-risk-check`, [analysis scripts](analysis/README.md) |
-| Read and produce spreadsheets, PDFs, Word files and presentations | `office-workflow` and the [office scripts](office/README.md) |
-| Remember project preferences and corrections | `project-memory` and project-local `.bailu-memory/` |
-| Resolve important ambiguities | `clarify-request`, which uses the host's question tool when available |
+| Register sources and validate market data | `market-data-intake` |
+| Forecast prices, spreads, demand, wind, solar, and available supply | `market-forecasting` and [analysis scripts](analysis/README.md) |
+| Compare exposures and cost scenarios | `position-monitoring` and settlement skills |
+| Prepare a declaration draft and record decisions | `trading-workflow` and `declaration-checklist` |
+| Reconcile spreadsheets and PDFs, deliver files | `office-workflow` and [office scripts](office/README.md) |
+| Recall preferences and clarify a decision | `project-memory` and `clarify-request` |
 
-Trading skills use exact arithmetic in Python or spreadsheet formulas and cite original documents, cells or pages. The [agent reference](docs/agent-reference.md) describes the relevant inputs and evidence.
+[Trading workflow guide](docs/trading-workflows.md) describes the inputs, artifacts, and human review step. Forecasts use historical baselines with measured errors and coverage.
 
-## Knowledge and development
+## Update and verify
 
-`knowledge/handbook/` contains 892 topics. Official material is in `knowledge/documents/`, verified version records are in `knowledge/policy_registry.json`, and supplemental ECNote material is in `knowledge/ecnote/`. `python scripts/knowledge_coverage.py` reports local coverage by region. Check the issuing authority's original document for the effective dates and the scope of any rule.
+Ask your agent to update the framework, or run the latest bootstrap with `--project <absolute project path> --check-update`. Use `--update` to apply. Use `--update --host <name>` to add a host to an existing installation. The updater compares the mirrors, checks the candidate in a temporary worktree, and preserves project rules, skill edits, and memory.
 
-Agent-facing content lives in `skills/`. Optional Python environments live in `office/` and `analysis/`. The Go source and regression fixtures in `tools/bailu/` support formula maintenance and synchronization with the desktop project. See the [Chinese README](README.md#开发) for test commands.
+The local knowledge includes 892 handbook topics, 151 official documents, 18 verified policy-version records and 2,180 ECNote entries. The issuing authority determines which rule applies on a given date.
 
-[MIT license](LICENSE) · [Third-party notices](NOTICE.md)
+```text
+python scripts/knowledge_coverage.py --check --format json
+```
+
+[Development tests](README.md#开发与复验) · [Agent reference](docs/agent-reference.md) · [MIT license](LICENSE) · [Third-party notices](NOTICE.md)

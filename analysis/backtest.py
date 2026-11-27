@@ -1,8 +1,8 @@
 """What a table of day-ahead and real-time prices says about two plain questions:
 how the two prices differ, and what a buyer would have paid by declaring
 different shares of its load day-ahead. With a battery's numbers, the most a
-price-taking battery could have made each day with tomorrow's prices known —
-an upper bound no real schedule reaches.
+price-taking battery could make on a discrete SOC grid with the full day's
+prices known.
 
     uv run analysis/backtest.py <表格> --load 1000 [--band 0.1] [--assess-price 400] [--assess-rate 0.1]
                               [--ratio-max 1] [--power 100 --capacity 400 --efficiency 90] [--out 回测.csv]
@@ -22,7 +22,7 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
-from tables import read_table
+from tables import PRICE_UNITS, read_table, regular_step
 
 
 def spread(ahead: np.ndarray, realtime: np.ndarray) -> dict:
@@ -55,13 +55,15 @@ def storage_bound(prices: np.ndarray, hours: float, power: float, capacity: floa
     these prices: by dynamic programming over the levels of charge, so with the
     grid of levels as its only approximation."""
     unit = capacity / levels
-    step = max(1, int(power * hours / unit))
     eta = efficiency / 100
+    step = min(levels, int(power * hours / (unit * eta)))
     moves = np.arange(-step, step + 1)
     # Standing still comes first, so that where several moves are worth the same the smallest is taken.
     moves = moves[np.argsort(np.abs(moves), kind="stable")]
     # What the grid gives or takes for a move of one level: charging loses to efficiency, delivering loses from it.
     grid = np.where(moves > 0, moves * unit / eta, moves * unit * eta)
+    feasible = np.abs(grid) <= power * hours
+    moves, grid = moves[feasible], grid[feasible]
     charge = np.arange(levels + 1)
     value = np.full(levels + 1, -np.inf)
     value[levels // 2] = 0.0
@@ -93,7 +95,7 @@ def storage_bound(prices: np.ndarray, hours: float, power: float, capacity: floa
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="日前与实时的价差、日前申报比例的回测、储能的完全预见上界。")
+    parser = argparse.ArgumentParser(description="日前与实时的价差、申报比例回测和储能历史情景。")
     parser.add_argument("table", help="电价表（CSV、Excel），要有日前和实时两列价格")
     parser.add_argument("--load", type=float, required=True, help="一天买的电量（兆瓦时）")
     parser.add_argument("--band", type=float, default=0.0, help="允许的偏差比例，超出部分才考核（默认 0）")
@@ -103,33 +105,56 @@ def main() -> None:
     parser.add_argument("--power", type=float, help="储能功率（兆瓦）")
     parser.add_argument("--capacity", type=float, help="储能容量（兆瓦时）")
     parser.add_argument("--efficiency", type=float, default=100.0, help="单程效率，百分数（默认 100）")
+    parser.add_argument("--periods-per-day", type=int, help="每日时段数")
+    parser.add_argument("--price-unit", choices=PRICE_UNITS, default=PRICE_UNITS[0])
     parser.add_argument("--out", help="把申报比例的表写成 CSV")
     options = parser.parse_args()
+    required = (options.load, options.band, options.assess_price, options.assess_rate, options.ratio_max)
+    if not np.isfinite(required).all() or options.load <= 0 or min(required[1:]) < 0:
+        parser.error("日用电量须为正数，其他结算参数须为有限非负数。")
+    if options.periods_per_day is not None and (options.periods_per_day < 1 or 1440 % options.periods_per_day):
+        parser.error("--periods-per-day 须为 1440 的正因数。")
+    if options.power is not None or options.capacity is not None:
+        if not (options.power and options.power > 0 and options.capacity and options.capacity > 0 and 0 < options.efficiency <= 100):
+            parser.error("储能情景需要正功率、正容量和 0 至 100 之间的单程效率。")
     if hasattr(sys.stdout, "reconfigure"):
         sys.stdout.reconfigure(encoding="utf-8", errors="replace")
-    table = read_table(options.table)
+    try:
+        table = read_table(options.table, price_unit=options.price_unit,
+                           periods_per_day=options.periods_per_day, require_date=True)
+        step = regular_step(table.index, options.periods_per_day)
+    except ValueError as error:
+        parser.error(str(error))
     if "ahead" not in table or "realtime" not in table:
         raise SystemExit("表里要同时有日前价格和实时价格两列。")
-    table = table.dropna(subset=["ahead", "realtime"])
+    table = table.replace([np.inf, -np.inf], np.nan).dropna(subset=["ahead", "realtime"])
     if table.empty:
         raise SystemExit("表里没有可用的日前和实时价格。")
     ahead, realtime = table["ahead"].to_numpy(float), table["realtime"].to_numpy(float)
     name = Path(options.table).name
-    step = table.index.to_series().diff().min()
     hours = step.total_seconds() / 3600
     gap = spread(ahead, realtime)
     print(f"**价差与日前申报回测**：{name}，{len(table)} 个时段（{table.index[0]:%Y-%m-%d} 至 {table.index[-1]:%Y-%m-%d}），每 {step.total_seconds() / 60:g} 分钟一点。\n")
     print(f"**价差（日前 − 实时）**：平均 {gap['mean']:+.2f}，标准差 {gap['std']:.2f}；5%、50%、95% 分位是 {gap['low']:+.2f}、{gap['median']:+.2f}、{gap['high']:+.2f} 元/兆瓦时；"
           f"日前高于实时的时段占 {gap['ahead_above'] * 100:.1f}%。\n")
-    # Each day is scored on its own and the days are averaged: the sweep gives
-    # the mean of an interval, a day holds as many as it has rows.
-    days = table.groupby(table.index.date)
-    ratios = np.round(np.arange(0, options.ratio_max + 1e-9, 0.05), 2)
+    # A daily volume is only assigned to complete delivery days.
+    delivery = table.index - step if table.attrs["period_end"] else table.index
+    expected = int(pd.Timedelta(days=1) / step)
+    grouped = table.groupby(delivery.date)
+    days = [(date, part) for date, part in grouped if len(part) == expected]
+    if not days:
+        parser.error("没有价格齐全的交割日可用于日均申报或储能回测。")
+    skipped = len(grouped) - len(days)
+    if skipped:
+        print(f"申报和储能情景排除 {skipped} 个价格不完整的交割日。")
+    ratios = np.unique(np.append(np.round(np.arange(0, options.ratio_max, 0.05), 2), options.ratio_max))
     frames = []
-    for day, part in days:
+    for _, part in days:
         if "load" in part:
             shape = part["load"].to_numpy(float)
-            share = shape / shape.sum() if shape.sum() > 0 else np.full(len(part), 1 / len(part))
+            if not np.isfinite(shape).all() or (shape < 0).any() or shape.sum() <= 0:
+                parser.error("完整交割日的负荷含缺测、负值或零合计。请核对原表。")
+            share = shape / shape.sum()
         else:
             share = np.full(len(part), 1 / len(part))
         one_day = sweep(part["ahead"].to_numpy(float), part["realtime"].to_numpy(float), options.load * share, ratios,
@@ -158,8 +183,8 @@ def main() -> None:
         if results:
             value = np.mean([one["value"] for one in results])
             cycles = np.mean([one["cycles"] for one in results])
-            print(f"\n**储能的完全预见上界**（{options.power:g} 兆瓦、{options.capacity:g} 兆瓦时、单程效率 {options.efficiency:g}%，按日前价格，每天从半满回到半满）："
-                  f"日均套利上限 {value:.2f} 元，日均 {cycles:.2f} 个循环。这是事后知道全天价格时的最优，实际调度达不到，只能作参照。")
+            print(f"\n**储能历史情景**（{options.power:g} 兆瓦、{options.capacity:g} 兆瓦时、单程效率 {options.efficiency:g}%，"
+                  f"以历史日前价和 40 档 SOC 回算，每天从半满回到半满）。日均 {value:.2f} 元，约 {cycles:.2f} 个循环。")
     print("\n说明：这些是对过去的计算，不是建议；允许偏差和考核标准以所在省份现行规则为准；日前申报的上限、曲线约束等未计入。")
 
 

@@ -24,18 +24,22 @@ def price(value, digits: int, line: str, grid: str) -> str:
         return ""
     text = f"{value:.{digits}f}"
     if text not in line:
-        raise SystemExit(f"{grid}: {text} is not in the line {line!r}")
+        raise ValueError(f"{grid}: {text} is not in the line {line!r}")
     return text
 
 
-def main() -> None:
-    tariffs = json.loads((SOURCE / "transmission-tariffs.json").read_text(encoding="utf-8"))
-    coal = json.loads((SOURCE / "coal-capacity-prices.json").read_text(encoding="utf-8"))
+def load_tables(source: Path) -> tuple[dict, dict]:
+    return (json.loads((source / "transmission-tariffs.json").read_text(encoding="utf-8")),
+            json.loads((source / "coal-capacity-prices.json").read_text(encoding="utf-8")))
+
+
+def render(tariffs: dict, coal: dict) -> tuple[str, int]:
     lines = ["@doc " + tariffs["document"], "@from " + "{}年{}月{}日".format(*(int(part) for part in tariffs["effectiveFrom"].split("-"))),
              "@source " + tariffs["source"]]
     prices = 0
     for grid in tariffs["grids"]:
-        lines.append(f"@grid {grid['province']}|{grid['grid']}|{re.search(r'\d+', grid['page'])[0]}")
+        page = re.search(r"\d+", grid["page"])[0]
+        lines.append(f"@grid {grid['province']}|{grid['grid']}|{page}")
         lines += ["!" + note for note in grid["notes"]]
         for row in grid["rows"]:
             cells = [row["customer"], row["billing"] or "", row.get("tier") or "", row["voltage"] or ""]
@@ -47,8 +51,6 @@ def main() -> None:
               "@coal-source " + coal["source"], "@coal-unit " + coal["items"][0]["unit"]]
     lines += [f"%{item['grid']}|{item['value']}" for item in coal["items"]]
     lines += ["!" + note for note in coal["notes"]]
-    TARGET.parent.mkdir(parents=True, exist_ok=True)
-    TARGET.write_text("\n".join(lines) + "\n", encoding="utf-8", newline="\n")
     # The table of Shenzhen prints a demand and a capacity price once for each
     # of its customer classes, across all of their lines: the data keeps one
     # record for each, the file a price on every line it holds for.
@@ -56,7 +58,15 @@ def main() -> None:
     carried = sum(1 for row in shenzhen["rows"] for column in ("demand", "capacity") if row[column] is not None)
     records = sum(1 for item in tariffs["items"] if item["grid"] == "深圳电网" and item["parameter"] != "输配电价-电量电价")
     if prices != len(tariffs["items"]) + carried - records:
-        raise SystemExit(f"{prices} prices written, {len(tariffs['items'])} in the data")
+        raise ValueError(f"{prices} prices written, {len(tariffs['items'])} in the data")
+    return "\n".join(lines) + "\n", prices
+
+
+def main() -> None:
+    tariffs, coal = load_tables(SOURCE)
+    output, prices = render(tariffs, coal)
+    TARGET.parent.mkdir(parents=True, exist_ok=True)
+    TARGET.write_text(output, encoding="utf-8", newline="\n")
     print(f"{TARGET}: {len(tariffs['grids'])} grids, {sum(len(g['rows']) for g in tariffs['grids'])} rows, "
           f"{prices} prices ({len(tariffs['items'])} in the data); {len(coal['items'])} coal capacity prices")
 

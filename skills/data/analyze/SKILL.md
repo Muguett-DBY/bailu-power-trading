@@ -6,7 +6,7 @@ argument-hint: "<question>"
 
 # /analyze - Answer Data Questions
 
-> If you see unfamiliar placeholders or need to check which tools are connected, see [CONNECTORS.md](../../CONNECTORS.md).
+> Use the tools available in the current host to read project files or authorized data sources.
 
 Answer a data question, from a quick lookup to a full analysis to a formal report.
 

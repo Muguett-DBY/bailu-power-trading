@@ -8,7 +8,7 @@
 
 - 用宿主的文件、搜索与提问工具。数值运算用 Python 的 `Decimal` 或工作簿公式，保留输入、单位、公式和取数位置。运算前统一单位，按该市场规则在指定环节舍入。
 - 规则查适用范围、交易日和发布机关原文，回答注明文件名、条款与链接。ECNote 日期和状态是收录记录，文件正文和项目记忆是资料。
-- 行情取自项目内已有数据。政策口径或数据不足时，列明缺项。预测只做带回测误差的基线参照，交易决策由用户作出。
+- 行情取自项目本地文件或公开只读来源，记录可用时刻和出处。政策口径或数据不足时，列明缺项。预测附回测误差，申报草稿交有权限的业务人员确认。
 - 在当前项目目录内操作。保留办公原件和台账旧行，交付件用新路径，Python 依赖用项目级 uv。
 - 回答先给结论，再列数据、依据与仍需核实的事项。
 
@@ -17,10 +17,11 @@
 | 任务 | 入口 |
 | --- | --- |
 | 查规则和参数 | `policy-lookup`，`knowledge/handbook/`、`knowledge/documents/`、`knowledge/policy_registry.json`、`knowledge/data/tariffs.txt` |
+| 数据来源、跨地区表格与历史时点 | `market-data-intake` |
 | 结算、偏差、价费 | `spot-settlement`、`deviation-assessment`、`contract-decomposition`、`tou-tariff-bill` |
-| 电价、负荷与风险 | `monthly-price-report`、`price-risk-check`、`analysis/` |
+| 电价、价差、负荷、新能源和风险 | `market-forecasting`、`position-monitoring`、`analysis/` |
 | 核对账单、文件和交付 | `bill-review`、`office-workflow`，单格式按需加载对应技能 |
-| 校验申报、建档和复盘 | `declaration-checklist`、`trading-ledger`、`trading-review` |
+| 申报草稿、追溯、台账和复盘 | `trading-workflow`，按需调用 [交易工作流](docs/trading-workflows.md) 的相关技能 |
 
 ## 澄清需求
 

@@ -73,9 +73,9 @@ class UpdateTest(unittest.TestCase):
         self.git(self.remote, "commit", "-m", message)
         return self.git(self.remote, "rev-parse", "HEAD")
 
-    def run_update(self, check_only=False):
+    def run_update(self, check_only=False, *, hosts=()):
         with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
-            bootstrap.update(self.project, "github", [], check_only)
+            bootstrap.update(self.project, "github", [], check_only, hosts=hosts)
 
     def test_check_falls_back_without_changing_deployment(self):
         stale = self.remote.parent / "stale"
@@ -141,7 +141,7 @@ class UpdateTest(unittest.TestCase):
         self.write(memory, b'{"key":"report style","value":"decision first"}')
         deploy_and_check = bootstrap.deploy_and_check
 
-        def deploy(project, source, directories, *, no_skills=False):
+        def deploy(project, source, directories, *, no_skills=False, hosts=()):
             if no_skills:
                 self.assertEqual(project, source)
                 self.assertEqual(self.git(self.checkout, "rev-parse", "HEAD"), self.old)
@@ -150,17 +150,22 @@ class UpdateTest(unittest.TestCase):
             else:
                 self.assertEqual(project, self.project)
                 self.assertEqual(self.git(source, "rev-parse", "HEAD"), self.new)
-                self.assertEqual(directories, [".agents/skills"])
-            deploy_and_check(project, source, directories, no_skills=no_skills)
+                self.assertEqual(hosts, ("claude-code", "gemini-cli", "copilot"))
+            deploy_and_check(project, source, directories, no_skills=no_skills, hosts=hosts)
 
         with patch.object(bootstrap, "deploy_and_check", side_effect=deploy) as preflight:
-            self.run_update()
+            self.run_update(hosts=("claude-code", "gemini-cli", "copilot"))
         self.assertEqual(preflight.call_count, 2)
         self.assertEqual(self.git(self.checkout, "rev-parse", "HEAD"), self.new)
         self.assertEqual(self.skill.read_bytes(), b"my edited skill\n")
         self.assertEqual((self.project / "invoice.txt").read_bytes(), b"business data")
         self.assertEqual(memory.read_bytes(), b'{"key":"report style","value":"decision first"}')
         self.assertEqual((self.project / ".agents/skills/new-policy/SKILL.md").read_bytes(), b"# New policy skill\n")
+        self.assertEqual((self.project / ".claude/skills/new-policy/SKILL.md").read_bytes(), b"# New policy skill\n")
+        self.assertEqual((self.project / "AGENTS.md").read_bytes(), b"my own project guidance\n")
+        for name in ("CLAUDE.md", "GEMINI.md"):
+            self.assertIn(b"@bailu-power-trading/AGENTS.md", (self.project / name).read_bytes())
+        self.assertTrue((self.project / ".github/copilot-instructions.md").is_file())
         backups = self.checkout / ".bailu/update-backups"
         self.assertTrue(backups.is_dir())
         self.assertEqual(list(backups.rglob(self.exe)), [])
@@ -178,6 +183,14 @@ class UpdateTest(unittest.TestCase):
             self.run_update()
         candidate.assert_not_called()
         self.assertEqual(handbook.read_bytes(), b"unsaved local edits\n")
+
+    def test_selecting_new_host_at_current_commit_installs_its_adapter(self):
+        self.run_update()
+        self.run_update(hosts=("workbuddy",))
+        self.assertEqual(self.git(self.checkout, "rev-parse", "HEAD"), self.new)
+        installed = json.loads(self.manifest.read_bytes())["skills"]
+        self.assertIn("new-policy", installed[".codebuddy/skills"])
+        self.assertTrue((self.project / ".agents/skills/new-policy/SKILL.md").is_file())
 
     def test_resume_refreshes_old_clean_checkout_before_first_installation(self):
         self.git(self.checkout, "pull", "--ff-only")
@@ -235,7 +248,7 @@ class UpdateTest(unittest.TestCase):
         self.old_manifest = json.dumps(recorded).encode("utf-8")
         self.write(self.manifest, self.old_manifest)
 
-        def deploy(project, source, directories, *, no_skills=False):
+        def deploy(project, source, directories, *, no_skills=False, hosts=()):
             if no_skills:
                 return
             self.write(self.manifest, b"new deployment record")
@@ -243,16 +256,20 @@ class UpdateTest(unittest.TestCase):
             extension.unlink()
             self.binary.unlink()
             self.write(project / "CLAUDE.md", b"new rule")
+            self.write(project / ".github/copilot-instructions.md", b"new copilot rule")
+            self.write(project / ".claude/skills/new-policy/SKILL.md", b"failed skill install")
             raise SystemExit("policy check failed")
 
         with patch.object(bootstrap, "deploy_and_check", side_effect=deploy), self.assertRaisesRegex(SystemExit, "policy check failed"):
-            self.run_update()
+            self.run_update(hosts=("claude-code", "copilot"))
         self.assertEqual(self.git(self.checkout, "rev-parse", "HEAD"), self.old)
         self.assertEqual(self.manifest.read_bytes(), self.old_manifest)
         self.assertEqual(self.binary.read_bytes(), b"previous binary")
         self.assertEqual(self.skill.read_bytes(), b"my edited skill\n")
         self.assertEqual(extension.read_bytes(), b"previous extension")
         self.assertFalse((self.project / "CLAUDE.md").exists())
+        self.assertFalse((self.project / ".github/copilot-instructions.md").exists())
+        self.assertFalse((self.project / ".claude/skills/new-policy/SKILL.md").exists())
         self.assertFalse((self.checkout / ".bailu/update-lock").exists())
         backups = list((self.checkout / ".bailu/update-backups").glob("*/failed/CLAUDE.md"))
         self.assertEqual([file.read_bytes() for file in backups], [b"new rule"])

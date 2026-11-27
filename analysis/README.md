@@ -1,41 +1,39 @@
-# 分析层（可选）
+# 分析层
 
-可选分析层提供电价、负荷和出力的**基线预测**与**回测**，使用 pandas、numpy 和 matplotlib，依赖装在本目录的 `.venv`。`data-visualization` 技能也可以用这个环境绘图。
+可选 Python 工具提供历史基线预测、滚动回测和交易情景计算。基础部署后按需运行，依赖锁定在 `analysis/uv.lock`，环境在项目的 `analysis/.venv/`。
 
-## 安装
+## 基线预测
 
-装有 [uv](https://docs.astral.sh/uv/) 时，在框架目录运行一次：
+在框架根目录运行：
 
-```
-uv sync --project analysis
-```
-
-## 用法
-
-```
-uv run --project analysis analysis/forecasts.py 电价表.csv [--column 日前|实时|负荷] [--horizon 96] [--train 14] [--interval 90] [--out 预测.csv]
-uv run --project analysis analysis/backtest.py 电价表.csv --load 1000 [--band 0.1 --assess-price 400 --assess-rate 0.1] [--ratio-max 1] [--power 100 --capacity 400 --efficiency 90] [--out 回测.csv]
+```sh
+uv sync --project analysis --locked --cache-dir .cache/uv
+uv run --project analysis --locked --cache-dir .cache/uv python analysis/forecasts.py 价格表.csv --column 价差 --periods-per-day 96 --horizon 192 --out 价差预测.csv
+uv run --project analysis --locked --cache-dir .cache/uv python analysis/forecasts.py 供需.xlsx --column 净负荷 --periods-per-day 24 --horizon 24
 ```
 
-表格是交易平台上导出的 CSV 或 Excel，列名按中文或英文认：日期、时间（时刻或时段序号）、日前价格、实时价格、负荷。数值在 5 以下的价格按元/千瓦时读，换算成元/兆瓦时。
+| `--column` | 输入与单位 |
+| --- | --- |
+| 日前、实时 | 对应价格，统一到元/兆瓦时 |
+| 价差 | 同一市场和交割点的日前价减实时价，统一到元/兆瓦时 |
+| 负荷、风电、光伏、新能源、可用供应 | 对应的观测功率序列，输出兆瓦 |
+| 净负荷 | 同一口径的负荷减新能源观测功率，输出兆瓦 |
 
-### `forecasts.py` 基线预测与滚动回测
+提供日期和时段，或完整时间戳。整点 `24:00` 归入次日零点。时段编号不完整时传 `--periods-per-day`，例如 96 表示 15 分钟。价格列优先采用明确的单位，省略单位时可加 `--price-unit 元/兆瓦时` 或 `--price-unit 元/千瓦时`。未声明单位时脚本沿用旧版数值推断，低价或负价样本宜传明确单位。功率用 MW，也支持列头标注 kW 自动换算。若只给电量，先按时段长度换算成功率。
 
-三种基线：持续上一值、前 N 天同时段均值、上周同刻。每一天都做一次回测：只用这一天之前的数据，预测后面 `--horizon` 个时段，和实际比较。给出平均绝对误差、均方根误差、平均偏差和平均绝对百分比误差，并给误差最小的基线画出预测区间——区间的半宽取每个回测起点之前误差的分位数，再报告实际落在区间里的比例，区间太窄会直接显示出来。最后给出表格之后 `--horizon` 个时段的预测和区间，可写成 CSV。
+三种基线为持续上一值、同一时段的历史均值、上周同期。每个试验只读预测起点前的数据，给出所有基线共用的有效窗口。区间用到的历史误差必须在对应起点前已完整观测。报告列出 MAE、RMSE、平均偏差和可验证的覆盖率。给定的历史不足以检验覆盖率时，CSV 的区间留空。同日缺少最新观测时据实报告。[滚动预测起点评估](https://otexts.com/fpppy/05-toolbox.html)
 
-### `backtest.py` 价差、日前申报比例与储能上界
+## 历史情景
 
-- **价差**：日前减实时的分布。
-- **日前申报比例**：一天买 `--load` 兆瓦时，把日前申报的比例从 0 扫到 `--ratio-max`，算出每天的电费、其中日前和实时结算的部分、超允许偏差的考核，以及平均偏差电量；表里最省的比例照实写出。
-- **储能完全预见上界**（给了 `--power` 和 `--capacity` 时）：按日前价格、事后知道全天价格时，储能一天最多能套利多少（动态规划，从半满回到半满）。这是达不到的上界，只作参照。
-
-## 边界
-
-- 预测只是历史基线：给用户时必须连同基线名称、回测误差和区间覆盖率一起给。
-- 回测是对过去的计算，不是建议；允许偏差和考核标准以所在省份现行规则为准；申报上限、曲线约束等没有计入。
-
-## 测试
-
+```sh
+uv run --project analysis --locked --cache-dir .cache/uv python analysis/backtest.py 电价表.csv --load 1000 --price-unit 元/兆瓦时 --power 100 --capacity 400 --efficiency 90 --out 回测.csv
 ```
-uv run --project analysis python -m unittest discover -s analysis -p "test_*.py"
+
+- 日前减实时的价差分布使用已配对的时段。
+- 申报比例和储能的日均结果只用价格齐全的交割日。申报回测按用户提供的日用电量、考核标准和负荷形状计算，输出不同申报比例的日前、实时和偏差费用。
+- 储能采用 40 档 SOC、指定功率和单程效率，在完整历史日前曲线上回算。结果为该离散模型的历史情景。
+- 天气、供需变化和节点价格比较按[交易工作流](../docs/trading-workflows.md)分别记录出处、发布时间、交割时刻和假设。
+
+```sh
+uv run --project analysis --locked python -m unittest discover -s analysis
 ```

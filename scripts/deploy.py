@@ -16,11 +16,27 @@ from pathlib import Path
 FRAMEWORK = Path(__file__).resolve().parent.parent
 MANIFEST = ".bailu-install.json"
 SKILL_GROUPS = ("power-trading", "office", "design", "data")
-# The folder each agent reads the skills of a project from, by a folder it
-# keeps in the project.
-CONVENTIONS = {".claude": ".claude/skills", ".cursor": ".cursor/skills", ".codebuddy": ".codebuddy/skills",
-               ".gemini": ".gemini/skills", ".windsurf": ".windsurf/skills", ".zcode": ".zcode/skills"}
-RULES = (("AGENTS.md", None), ("CLAUDE.md", "@AGENTS.md\n"), ("GEMINI.md", "@AGENTS.md\n"))
+COMMON_SKILLS = ".agents/skills"
+NATIVE_SKILLS = {
+    "claude-code": ".claude/skills",
+    "workbuddy": ".codebuddy/skills",
+    "zcode": ".zcode/skills",
+    "windsurf": ".windsurf/skills",
+    "trae": ".trae/skills",
+    "qoder": ".qoder/skills",
+    "kiro": ".kiro/skills",
+    "cline": ".cline/skills",
+}
+NATIVE_RULES = {
+    "claude-code": "CLAUDE.md",
+    "gemini-cli": "GEMINI.md",
+    "copilot": ".github/copilot-instructions.md",
+}
+STANDARD_HOSTS = {
+    "antigravity", "codex", "cursor", "devin", "doubao-work", "generic", "opencode", "pi", "qwen-code",
+}
+HOST_NAMES = sorted(STANDARD_HOSTS | NATIVE_SKILLS.keys() | NATIVE_RULES.keys())
+RULE_FILES = {"AGENTS.md", *NATIVE_RULES.values()}
 LEGACY_QUESTION_EXTENSION = ".pi/extensions/bailu-ask-user.ts"
 
 
@@ -31,24 +47,27 @@ def inside(project: Path, target: Path) -> Path:
     return target
 
 
-def skill_dirs(project: Path, given: list) -> list:
-    """The folders the skills go to: those named, relative to the project, or
-    .agents/skills and the convention of each agent the project has a folder for."""
-    if given:
-        folders = []
-        for one in given:
-            folder = Path(one) if Path(one).is_absolute() else project / one
-            folder = folder.resolve()
-            if folder == project or not folder.is_relative_to(project):
-                raise SystemExit(f"技能目录要放在项目文件夹里：{one} 不在 {project} 之下。")
-            if folder not in folders:
-                folders.append(folder)
-        return folders
-    folders = [project / ".agents" / "skills"]
-    for mark, folder in CONVENTIONS.items():
-        if (project / mark).is_dir():
-            folders.append(project / folder)
-    return [inside(project, folder) for folder in folders]
+def deployment_plan(project: Path, given: list[str], hosts: list[str], earlier: dict) -> tuple[list[Path], list[str]]:
+    """Use portable skills and add project-local adapters only for active hosts."""
+    selected = set(hosts)
+    requested = [inside(project, project / folder).resolve() for folder in [*installed_skills(earlier), *given]]
+    for host, folder in NATIVE_SKILLS.items():
+        native = project / folder
+        if native.parent.is_dir() or native.resolve() in requested:
+            selected.add(host)
+    # The old installer put CLAUDE.md in every workspace. Only a user-owned
+    # CLAUDE.md (or the actual .claude folder) opts a workspace into that adapter.
+    for host, name in NATIVE_RULES.items():
+        if (project / name).is_file() and name not in earlier.get("files", []):
+            selected.add(host)
+    if (project / ".gemini").is_dir():
+        selected.add("gemini-cli")
+    folders = [inside(project, project / COMMON_SKILLS).resolve()]
+    folders.extend(inside(project, project / folder).resolve() for host, folder in NATIVE_SKILLS.items() if host in selected)
+    rules = ["AGENTS.md", *(name for host, name in NATIVE_RULES.items() if host in selected or name in earlier.get("files", []))]
+    for name in rules:
+        inside(project, project / name)
+    return list(dict.fromkeys([*folders, *requested])), rules
 
 
 def skills_of() -> list:
@@ -73,32 +92,37 @@ def put_aside(project: Path, target: Path) -> Path:
     return backup
 
 
-def rules(project: Path, framework: str, hashes: dict) -> list:
+def rules(project: Path, framework: str, hashes: dict, selected: list[str]) -> list:
     """Write the framework pointer and preserve the project's own rules."""
     own = framework == "."
     where = "AGENTS.md" if own else framework + "/AGENTS.md"
     pointer = f"- 先读 `{where}`，按其中的规则和任务入口工作。\n"
     written = []
-    for name, head in RULES:
-        if name == "GEMINI.md" and not (project / ".gemini").is_dir():
-            continue
+    for name in selected:
         target = inside(project, project / name)
         if name == "AGENTS.md" and own:
             continue
         if name == "AGENTS.md" and not own:
             text = f"# 电力交易框架\n\n本项目装有 Bailu 电力交易框架。\n\n{pointer}"
+        elif name in ("CLAUDE.md", "GEMINI.md"):
+            # Import the project's rules and the framework directly. The
+            # project's existing AGENTS.md may be intentionally left untouched.
+            text = "@AGENTS.md\n" if own else f"@AGENTS.md\n@{where}\n"
         else:
-            text = head + pointer
+            text = pointer
         if target.exists():
             current = target.read_bytes()
             if current == text.encode():
                 continue
             if hashes.get(name) != hashlib.sha256(current).hexdigest():
                 existing = current.decode("utf-8", errors="replace")
-                follows_agents = name != "AGENTS.md" and "@AGENTS.md" in existing
+                follows_agents = name != "AGENTS.md" and "@AGENTS.md" in existing and (
+                    (project / "AGENTS.md").is_file() and where in (project / "AGENTS.md").read_text(encoding="utf-8", errors="replace")
+                )
                 if not own and where not in existing and not follows_agents:
                     print(f"{name} 已存在，没有改动它。请在其中加一行，让 agent 先读 {where}。")
                 continue
+        target.parent.mkdir(parents=True, exist_ok=True)
         target.write_text(text, encoding="utf-8", newline="\n")
         written.append(name)
     return written
@@ -178,7 +202,7 @@ def copy_skills(project: Path, folders: list, manifest: dict, force: bool) -> No
             manifest["skills"][named] = installed
 
 
-def deploy(project: Path, skills: list, with_skills: bool, force: bool) -> None:
+def deploy(project: Path, requested: list[str], with_skills: bool, force: bool, hosts: list[str]) -> None:
     if not (FRAMEWORK / "AGENTS.md").is_file():
         raise SystemExit("框架不完整：找不到 AGENTS.md。请重新获取整个仓库。")
     if not FRAMEWORK.is_relative_to(project):
@@ -190,11 +214,13 @@ def deploy(project: Path, skills: list, with_skills: bool, force: bool) -> None:
     earlier = json.loads(record.read_text(encoding="utf-8")) if record.is_file() else {}
     if earlier.get("framework", framework) != framework:
         raise SystemExit("部署记录指向另一份框架。请先从原框架目录卸载。")
+    skills, rule_files = deployment_plan(project, requested, hosts, earlier)
     if not earlier and framework != ".":
         # The framework was cloned into a folder that is somebody's already: say what will be written there.
         others = [entry.name for entry in project.iterdir() if entry.name not in (FRAMEWORK.name, MANIFEST)]
         if others:
-            written = [folder.relative_to(project).as_posix() for folder in skills] + [name for name, _ in RULES if not (project / name).exists()]
+            written = [folder.relative_to(project).as_posix() for folder in skills if with_skills]
+            written += [name for name in rule_files if not (project / name).exists()]
             written += [framework + "/.bailu", MANIFEST]
             print(f"注意：{project} 里已经有 {len(others)} 项别的东西，不会改动它们。部署只写入：" + "、".join(written))
     manifest = {"deployment": "agent-framework", "framework": framework, "skills": installed_skills(earlier),
@@ -203,7 +229,7 @@ def deploy(project: Path, skills: list, with_skills: bool, force: bool) -> None:
     if with_skills:
         copy_skills(project, skills, manifest, force)
     previous_hashes = earlier.get("hashes", {})
-    written = rules(project, framework, previous_hashes)
+    written = rules(project, framework, previous_hashes, rule_files)
     # A rule file an earlier run wrote and this one left in place is still the deployment's.
     manifest["files"] = written + [name for name in earlier.get("files", [])
                                    if name != LEGACY_QUESTION_EXTENSION and name not in written and (project / name).is_file()]
@@ -263,7 +289,7 @@ def uninstall(project: Path) -> None:
                 raise SystemExit(f"部署记录中的技能名称无效：{name}")
             skills.append(inside(project, skill_dir / name))
     rule_names = manifest.get("files", [])
-    if set(rule_names).difference([name for name, _ in RULES] + [LEGACY_QUESTION_EXTENSION]):
+    if set(rule_names).difference(RULE_FILES | {LEGACY_QUESTION_EXTENSION}):
         raise SystemExit("部署记录包含未知的规则文件。")
     rules = [inside(project, project / name) for name in rule_names if name != LEGACY_QUESTION_EXTENSION]
     legacy = owned_legacy_question_extension(project, manifest)
@@ -331,7 +357,9 @@ def main() -> None:
         sys.stdout.reconfigure(encoding="utf-8", errors="replace", line_buffering=True)
     parser = argparse.ArgumentParser(description="把电力交易框架放进当前项目。")
     parser.add_argument("--project", help="要工作的项目文件夹")
-    parser.add_argument("--skills-dir", action="append", help="agent 读取项目级技能的目录（项目内，相对路径按项目算），可重复；默认 <项目>/.agents/skills 及项目里已有约定的 agent 目录")
+    parser.add_argument("--skills-dir", action="append", default=[], help="另外安装到项目内的技能目录，可重复")
+    parser.add_argument("--host", action="append", choices=HOST_NAMES, default=[], help="增加指定宿主的项目级适配，可重复")
+    parser.add_argument("--plan", action="store_true", help=argparse.SUPPRESS)
     parser.add_argument("--no-skills", action="store_true", help="不复制技能")
     parser.add_argument("--no-tool", action="store_true", help=argparse.SUPPRESS)
     parser.add_argument("--force", action="store_true", help="用框架的技能覆盖已有的同名文件夹（原有的改名保留为 *.before-bailu）")
@@ -344,8 +372,13 @@ def main() -> None:
     if options.uninstall:
         uninstall(project)
         return
-    skills = skill_dirs(project, options.skills_dir or [])
-    deploy(project, skills, not options.no_skills, options.force)
+    if options.plan:
+        record = inside(project, project / MANIFEST)
+        earlier = json.loads(record.read_text(encoding="utf-8")) if record.is_file() else {}
+        folders, rule_files = deployment_plan(project, options.skills_dir, options.host, earlier)
+        print(json.dumps({"skills": [folder.relative_to(project).as_posix() for folder in folders], "rules": rule_files}))
+        return
+    deploy(project, options.skills_dir, not options.no_skills, options.force, options.host)
 
 
 if __name__ == "__main__":

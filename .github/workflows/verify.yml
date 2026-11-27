@@ -1,0 +1,35 @@
+name: Verify framework
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: windows-2025
+            python: '3.10'
+          - runner: ubuntu-latest
+            python: '3.13'
+    runs-on: ${{ matrix.runner }}
+    env:
+      PYTHONUTF8: '1'
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
+        with:
+          python-version: ${{ matrix.python }}
+      - run: uv run python -m unittest discover -s scripts
+      - run: uv run python scripts/knowledge_coverage.py --check --format json
+      - run: uv run --project office --locked python -m unittest discover -s office
+      - run: uv run --project analysis --locked python -m unittest discover -s analysis

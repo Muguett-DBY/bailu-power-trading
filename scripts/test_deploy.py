@@ -45,27 +45,29 @@ class DeploymentTest(unittest.TestCase):
         with contextlib.redirect_stdout(self.said):
             return work(*args)
 
-    def deploy_into(self, project: Path, force=False, with_skills=True):
-        self.quietly(self.deploy.deploy, project, self.deploy.skill_dirs(project, []), with_skills, force)
+    def deploy_into(self, project: Path, force=False, with_skills=True, hosts=None, directories=None):
+        self.quietly(self.deploy.deploy, project, directories or [], with_skills, force, hosts or [])
         return json.loads((project / self.deploy.MANIFEST).read_text(encoding="utf-8"))
 
     def test_skills_go_to_the_common_folder_and_to_each_agent_the_project_uses(self):
         project = self.home / "项目 with spaces"
         (project / ".claude").mkdir(parents=True)
         (project / ".gemini").mkdir()
-        folders = self.deploy.skill_dirs(project, [])
-        self.assertEqual(folders, [project / ".agents" / "skills", project / ".claude" / "skills", project / ".gemini" / "skills"])
-        # A relative folder is taken from the project, an absolute one as it is.
-        self.assertEqual(self.deploy.skill_dirs(project, [".cursor/skills"]), [project / ".cursor" / "skills"])
-        self.assertEqual(self.deploy.skill_dirs(project, ["mine"]), [project / "mine"])
+        folders, rules = self.deploy.deployment_plan(project, [], [], {})
+        self.assertEqual(folders, [project / ".agents/skills", project / ".claude/skills"])
+        self.assertEqual(rules, ["AGENTS.md", "CLAUDE.md", "GEMINI.md"])
+        # Custom folders supplement the portable and autodetected locations.
+        folders, _ = self.deploy.deployment_plan(project, ["mine", str(project / "mine")], [], {})
+        self.assertEqual(folders, [project / ".agents/skills", project / ".claude/skills", project / "mine"])
         with self.assertRaises(SystemExit) as stopped:
-            self.deploy.skill_dirs(project, [str(self.home / "elsewhere")])
-        self.assertIn("要放在项目文件夹里", str(stopped.exception))
+            self.deploy.deployment_plan(project, [str(self.home / "elsewhere")], [], {})
+        self.assertIn("必须位于项目文件夹", str(stopped.exception))
 
     def test_project_rules_point_to_framework_without_binary_paths(self):
         project = self.home / "project"
         self.framework_at(project / "bailu-power-trading")
-        written = self.quietly(self.deploy.rules, project, "bailu-power-trading", {})
+        names = ["AGENTS.md", "CLAUDE.md"]
+        written = self.quietly(self.deploy.rules, project, "bailu-power-trading", {}, names)
         self.assertEqual(written, ["AGENTS.md", "CLAUDE.md"])
         rules = (project / "AGENTS.md").read_text(encoding="utf-8")
         self.assertIn("bailu-power-trading/AGENTS.md", rules)
@@ -75,12 +77,12 @@ class DeploymentTest(unittest.TestCase):
         self.assertIn("bailu-power-trading/AGENTS.md", claude)
         self.assertNotIn(".bailu/bin", claude)
         (project / "CLAUDE.md").write_text("the project's own notes\n", encoding="utf-8")
-        self.assertEqual(self.quietly(self.deploy.rules, project, "bailu-power-trading", {}), [])
+        self.assertEqual(self.quietly(self.deploy.rules, project, "bailu-power-trading", {}, names), [])
         self.assertEqual((project / "CLAUDE.md").read_text(encoding="utf-8"), "the project's own notes\n")
 
     def test_the_framework_is_the_project_itself(self):
         project = self.framework_at(self.home / "clone")
-        self.assertEqual(self.quietly(self.deploy.rules, project, ".", {}), ["CLAUDE.md"])
+        self.assertEqual(self.quietly(self.deploy.rules, project, ".", {}, ["AGENTS.md", "CLAUDE.md"]), ["CLAUDE.md"])
         claude = (project / "CLAUDE.md").read_text(encoding="utf-8")
         self.assertNotIn("bailu-power-trading", claude)
         self.assertIn("AGENTS.md", claude)
@@ -167,6 +169,32 @@ class DeploymentTest(unittest.TestCase):
         for directory in record["skills"]:
             self.assertTrue((project / directory / "clarify-request/SKILL.md").is_file())
         self.assertFalse((project / ".pi").exists())
+
+    def test_selected_hosts_create_only_project_adapters_and_keep_user_rules(self):
+        project = self.home / "project"
+        self.framework_at(project / "bailu-power-trading", skills=("clarify-request",))
+        local_rules = project / "AGENTS.md"
+        local_rules.write_bytes(b"existing user rules")
+        hosts = self.deploy.HOST_NAMES
+        record = self.deploy_into(project, hosts=hosts)
+        self.assertEqual(set(record["skills"]), {".agents/skills", *self.deploy.NATIVE_SKILLS.values()})
+        self.assertEqual(set(record["files"]), {"CLAUDE.md", "GEMINI.md", ".github/copilot-instructions.md"})
+        for name in ("CLAUDE.md", "GEMINI.md"):
+            value = (project / name).read_text(encoding="utf-8")
+            self.assertEqual(value.splitlines(), ["@AGENTS.md", "@bailu-power-trading/AGENTS.md"])
+        self.assertFalse((project / ".pi").exists())
+        self.assertFalse((project / ".doubao").exists())
+        self.assertEqual(local_rules.read_bytes(), b"existing user rules")
+        self.quietly(self.deploy.uninstall, project)
+        self.assertEqual(local_rules.read_bytes(), b"existing user rules")
+        self.assertFalse((project / ".github/copilot-instructions.md").exists())
+
+    def test_default_portable_install_has_no_unselected_adapters(self):
+        project = self.home / "project"
+        self.framework_at(project / "bailu-power-trading")
+        record = self.deploy_into(project)
+        self.assertEqual(list(record["skills"]), [".agents/skills"])
+        self.assertEqual(record["files"], ["AGENTS.md"])
 
     def test_redeploy_archives_the_unchanged_legacy_extension(self):
         project = self.home / "project"
@@ -301,7 +329,7 @@ class DeploymentTest(unittest.TestCase):
         project.mkdir()
         self.framework_at(self.home / "elsewhere")
         with self.assertRaises(SystemExit) as stopped:
-            self.quietly(self.deploy.deploy, project, [], True, False)
+            self.quietly(self.deploy.deploy, project, [], True, False, [])
         self.assertIn("不在要工作的项目文件夹里", str(stopped.exception))
 
     def test_a_framework_without_rules_is_refused(self):
@@ -309,7 +337,7 @@ class DeploymentTest(unittest.TestCase):
         framework = self.framework_at(project / "bailu-power-trading")
         (framework / "AGENTS.md").unlink()
         with self.assertRaises(SystemExit) as stopped:
-            self.quietly(self.deploy.deploy, project, [], True, False)
+            self.quietly(self.deploy.deploy, project, [], True, False, [])
         self.assertIn("框架不完整", str(stopped.exception))
 
 

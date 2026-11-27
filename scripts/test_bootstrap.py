@@ -85,11 +85,11 @@ class BootstrapTest(unittest.TestCase):
         (self.project / bootstrap.MANIFEST).write_text(json.dumps(record), encoding="utf-8")
         output = io.StringIO()
         with patch.object(bootstrap.subprocess, "run", return_value=subprocess.CompletedProcess([], 0)) as run, contextlib.redirect_stdout(output):
-            bootstrap.deploy_and_check(self.project, self.project, [".codebuddy/skills"])
+            bootstrap.deploy_and_check(self.project, self.project, [".codebuddy/skills"], hosts=("claude-code",))
         run.assert_called_once()
         command = run.call_args.args[0]
         self.assertEqual(command[1], str(self.project / "scripts/deploy.py"))
-        self.assertEqual(command[-2:], ["--skills-dir", ".codebuddy/skills"])
+        self.assertEqual(command[-4:], ["--skills-dir", ".codebuddy/skills", "--host", "claude-code"])
         self.assertIn("--no-tool", command)
         self.assertIn("政策原文文件已检查", output.getvalue())
 

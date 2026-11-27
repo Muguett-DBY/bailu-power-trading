@@ -1,6 +1,6 @@
 # 收录的上游技能 / Skills taken from upstream
 
-这些技能原样复制自上游，连同各自的许可证文件；没有改动。
+这些技能来自下列上游版本。保留各自的许可证文件，项目级接入调整见表后说明。
 
 | 技能 | 来源 | 提交 | 许可证 |
 | --- | --- | --- | --- |
@@ -19,12 +19,13 @@
 | `data/validate-data` | [anthropics/knowledge-work-plugins](https://github.com/anthropics/knowledge-work-plugins) · `data/skills/validate-data` | `5e504ae11498` | Apache-2.0（`LICENSE.txt`） |
 | `data/data-visualization` | [anthropics/knowledge-work-plugins](https://github.com/anthropics/knowledge-work-plugins) · `data/skills/data-visualization` | `5e504ae11498` | Apache-2.0（`LICENSE.txt`） |
 | `data/clean-data-xls` | [anthropics/financial-services](https://github.com/anthropics/financial-services) · `plugins/vertical-plugins/financial-analysis/skills/clean-data-xls` | `3e32c2287dcb` | Apache-2.0（`LICENSE.txt`） |
+| `data/data-storytelling` | [wshobson/agents](https://github.com/wshobson/agents/tree/c96b5f6552dba32e4492307493ee613581430715/plugins/business-analytics/skills/data-storytelling) | `c96b5f6552dba32e4492307493ee613581430715` | MIT（`LICENSE.txt`） |
 
 
-`data/` 下的五个技能开头有一行指向 `../../CONNECTORS.md` 的链接。那个文件在它们原来的插件目录里，是给连接了数仓的 agent 查占位符用的；单独使用时用不到，链接在这里失效。
+`analyze`、`explore-data` 和 `validate-data` 的连接器提示改为按宿主可用工具处理项目文件或已授权数据。随项目复制的技能可以独立阅读。
 
 上游 README 在该提交处写明文档技能（docx、pdf、pptx、xlsx）同样是 Apache 2.0 开源的。
 
 这些技能运行时可能用到 Python 库（如 python-docx、openpyxl、python-pptx、pdfplumber、reportlab）和命令行工具（如 LibreOffice、poppler 的 pdftotext、qpdf）。它们不随本框架分发，按各自 `SKILL.md` 里的说明在需要时安装。
 
-The skills above are copied unchanged from their upstream repositories at the commits named, each with its own license file. The Python libraries and command-line tools they call are not part of this framework; see each `SKILL.md`.
+The skills include their upstream licenses. The three data skills named above use a host-neutral connector note. The Python libraries and command-line tools they call are installed separately if a task requires them.

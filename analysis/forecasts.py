@@ -23,22 +23,30 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
-COLUMNS = {"日前": "ahead", "实时": "realtime", "负荷": "load"}
-NAMES = {"ahead": "日前价格", "realtime": "实时价格", "load": "负荷"}
+from tables import PRICE_UNITS, read_table, regular_step
+
+TARGETS = {
+    "日前": ("ahead",), "实时": ("realtime",), "价差": ("ahead", "realtime"),
+    "负荷": ("load",), "风电": ("wind",), "光伏": ("solar",), "新能源": ("renewable",),
+    "可用供应": ("supply",), "净负荷": ("load", "renewable"),
+}
 
 
-def read_series(path: str, column: str):
-    """The column of a table on a regular grid of time; missing moments are NaN."""
-    from tables import read_table
-
-    table = read_table(path, "实时" if column == "实时" else column)
-    name = COLUMNS[column]
-    if name not in table:
-        raise SystemExit(f"表里没有{NAMES[name]}这一列。表里的列：{'、'.join(table.columns) if len(table.columns) else '无'}")
-    series = table[name].dropna()
-    if len(series) < 48:
-        raise SystemExit(f"{NAMES[name]}只有 {len(series)} 个时段，至少要两天才能回测。")
-    step = series.index.to_series().diff().min()
+def read_series(path: str, column: str, *, price_unit="自动", periods_per_day=None):
+    """Read the target on a regular time grid. Unobserved intervals remain missing."""
+    table = read_table(path, column, price_unit=price_unit, periods_per_day=periods_per_day, require_date=True)
+    names = TARGETS[column]
+    if any(name not in table for name in names):
+        raise ValueError(f"表里没有「{column}」所需的全部原始列。")
+    if table.attrs["energy_columns"].intersection(names):
+        raise ValueError(f"「{column}」需要时段功率。请先按时段长度把电量换算为 MW。")
+    series = table[names[0]]
+    if len(names) == 2:
+        series = series - table[names[1]]
+    series = series.replace([np.inf, -np.inf], np.nan).dropna()
+    if len(series) < 2:
+        raise ValueError(f"「{column}」的有效历史记录不足。")
+    step = regular_step(series.index, periods_per_day)
     grid = pd.date_range(series.index[0], series.index[-1], freq=step)
     return series.reindex(grid), step
 
@@ -48,38 +56,39 @@ def per_day(step) -> int:
 
 
 def forecast(values: np.ndarray, at: int, horizon: int, model: str, day: int, train: int) -> np.ndarray:
-    """The next `horizon` values from the `at`-th on, by one baseline, from what lies before `at`."""
-    places = np.arange(at, at + horizon) - at
+    """Reuse only observations whose index is before the origin."""
+    offsets = np.arange(horizon)
     if model == "persistence":
         return np.full(horizon, values[at - 1])
     if model == "weekly":
-        return values[at + places - 7 * day]
-    out = np.empty(horizon)
-    for offset in range(horizon):
-        before = np.arange(1, train + 1) * day
-        before = before[before <= at + offset]
-        out[offset] = np.nanmean(values[at + offset - before])
-    return out
+        week = 7 * day
+        return values[at - week + offsets % week]
+    dates = at + np.arange(day) - np.arange(1, train + 1)[:, None] * day
+    samples = values[dates]
+    count = np.isfinite(samples).sum(axis=0)
+    averages = np.divide(np.nansum(samples, axis=0), count, out=np.full(day, np.nan), where=count > 0)
+    return averages[offsets % day]
 
 
-def backtest(values: np.ndarray, horizon: int, day: int, train: int, models) -> dict:
-    """For each baseline, its forecasts and errors at every day's origin that
-    has the history the baseline needs and the future to be compared with."""
-    need = max(train, 7) * day + horizon
-    origins = [at for at in range(need, len(values) - horizon + 1) if at % day == 0]
+def backtest(values: np.ndarray, horizon: int, day: int, train: int, models) -> tuple[dict, np.ndarray]:
+    """Compare all baselines on the same complete windows."""
+    predictions = {model: [] for model in models}
+    actual, origins = [], []
+    for at in range(max(train, 7) * day, len(values) - horizon + 1, day):
+        observed = values[at:at + horizon]
+        if not np.isfinite(observed).all():
+            continue
+        predicted = {model: forecast(values, at, horizon, model, day, train) for model in models}
+        if not all(np.isfinite(row).all() for row in predicted.values()):
+            continue
+        actual.append(observed)
+        origins.append(at)
+        for model, row in predicted.items():
+            predictions[model].append(row)
     if not origins:
-        raise SystemExit(f"数据不够做回测：回测需要至少 {need // day + 1} 天，才能留出历史和要比较的将来。")
-    out = {}
-    for model in models:
-        foreseen, actual = [], []
-        for at in origins:
-            ahead = values[at:at + horizon]
-            if np.isnan(ahead).any():
-                continue
-            foreseen.append(forecast(values, at, horizon, model, day, train))
-            actual.append(ahead)
-        out[model] = (np.array(foreseen), np.array(actual))
-    return out
+        raise ValueError("没有完整的可比回测窗口。请补充历史数据、核对缺测或缩短预测跨度。")
+    observed = np.asarray(actual)
+    return {model: (np.asarray(rows), observed) for model, rows in predictions.items()}, np.asarray(origins)
 
 
 def metrics(errors: np.ndarray, actual: np.ndarray) -> dict:
@@ -89,90 +98,84 @@ def metrics(errors: np.ndarray, actual: np.ndarray) -> dict:
         "rmse": float(np.sqrt((errors ** 2).mean())),
         "bias": errors.mean(),
     }
-    share = np.abs(actual) > 1e-9
-    out["mape"] = float((absolute[share] / np.abs(actual[share])).mean()) if share.all() else None
+    out["mape"] = float((absolute / actual).mean()) if (actual > 1e-9).all() else None
     return out
 
 
-def covered(foreseen: np.ndarray, actual: np.ndarray, day: int, interval: float):
-    """How many values fell inside a band drawn from the errors made before each
-    origin, and the median of those bands: an honest coverage, since no origin
-    sees its own errors."""
-    errors = np.abs(foreseen - actual)
+def covered(errors: np.ndarray, origins: np.ndarray, interval: float):
+    """Calibrate using only earlier windows that were fully observed."""
+    horizon = errors.shape[1]
     inside = total = 0
-    bands = []
-    for origin in range(1, len(errors)):
-        past = errors[:origin].ravel()
-        if len(past) < day:
-            continue
-        band = float(np.quantile(past, interval / 100))
-        inside += int((errors[origin] <= band).sum())
-        total += errors[origin].size
-        bands.append(band)
-    share = inside / total if total else None
-    return share, (float(np.median(bands)) if bands else None)
+    for index, origin in enumerate(origins):
+        ready = origins.searchsorted(origin - horizon, side="right")
+        if ready:
+            band = float(np.quantile(errors[:ready], interval / 100))
+            inside += np.count_nonzero(errors[index] <= band)
+            total += horizon
+    return inside / total if total else None
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="基线预测与滚动回测。")
-    parser.add_argument("table", help="电价表或负荷表（CSV、Excel）")
-    parser.add_argument("--column", default="日前", choices=list(COLUMNS), help="预测哪一列（默认：日前价格）")
-    parser.add_argument("--horizon", type=int, default=96, help="每次预测后面多少个时段（默认 96，即一天的 15 分钟点）")
-    parser.add_argument("--train", type=int, default=14, help="同时段均值用前面多少天（默认 14）")
-    parser.add_argument("--interval", type=float, default=90, help="预测区间的名义覆盖率，百分数（默认 90）")
-    parser.add_argument("--out", help="把接下来的预测写成 CSV")
+    parser.add_argument("table", help="市场历史表（CSV、Excel）")
+    parser.add_argument("--column", default="日前", choices=list(TARGETS), help="预测目标")
+    parser.add_argument("--horizon", type=int, default=96, help="每个预测窗口的时段数（默认 96）")
+    parser.add_argument("--train", type=int, default=14, help="同时段均值使用的天数（默认 14）")
+    parser.add_argument("--interval", type=float, default=90, help="预测区间的名义覆盖率（默认 90）")
+    parser.add_argument("--periods-per-day", type=int, help="每日电量时段数，例如 96 表示 15 分钟")
+    parser.add_argument("--price-unit", choices=PRICE_UNITS, default=PRICE_UNITS[0])
+    parser.add_argument("--out", type=Path, help="将预测写入 CSV")
     options = parser.parse_args()
+    if options.horizon < 1 or options.train < 1 or not 0 < options.interval < 100:
+        parser.error("跨度与训练天数须为正数，区间百分比须在 0 到 100 之间。")
+    if options.periods_per_day is not None and (options.periods_per_day < 1 or 1440 % options.periods_per_day):
+        parser.error("--periods-per-day 须为 1440 的正因数。")
     if hasattr(sys.stdout, "reconfigure"):
         sys.stdout.reconfigure(encoding="utf-8", errors="replace")
-    series, step = read_series(options.table, options.column)
-    day = per_day(step)
-    values = series.to_numpy(dtype=float)
-    models = [("persistence", "持续上一值"), ("daily", f"同时段均值（{options.train} 天）"), ("weekly", "上周同刻")]
-    results = backtest(values, options.horizon, day, options.train, [model for model, _ in models])
-    label = NAMES[COLUMNS[options.column]]
-    unit = "兆瓦" if options.column == "负荷" else "元/兆瓦时"
-    name = Path(options.table).name
-    print(f"**基线预测回测**：{name} 的「{label}」，{len(series.dropna())} 个时段（{series.index[0]:%Y-%m-%d} 至 {series.index[-1]:%Y-%m-%d}），"
-          f"每 {int(step.total_seconds() // 60)} 分钟一点；每次预测后面 {options.horizon} 个时段，回测 {len(results['persistence'][0])} 次。\n")
-    rows, best, scores = [], None, {}
-    for model, said in models:
-        foreseen, actual = results[model]
-        score = metrics(foreseen - actual, actual)
-        scores[model] = score
-        mape = f"{score['mape'] * 100:.1f}%" if score["mape"] is not None else "—"
-        rows.append(f"| {said} | {score['mae']:.2f} | {score['rmse']:.2f} | {score['bias']:+.2f} | {mape} |")
-        if best is None or score["mae"] < scores[best]["mae"]:
-            best = model
-    print(f"误差的单位是{unit}。平均绝对百分比误差一栏在数值经过零或为负时不计算（记「—」）。\n")
+    models = {"persistence": "持续上一值", "daily": f"同时段均值（{options.train} 天）", "weekly": "上周同期"}
+    try:
+        series, step = read_series(options.table, options.column, price_unit=options.price_unit,
+                                   periods_per_day=options.periods_per_day)
+        day = per_day(step)
+        values = series.to_numpy(dtype=float)
+        results, origins = backtest(values, options.horizon, day, options.train, models)
+    except ValueError as error:
+        parser.error(str(error))
+    unit = "元/兆瓦时" if options.column in ("日前", "实时", "价差") else "兆瓦"
+    print(f"**{options.column}基线回测** {Path(options.table).name}，{series.count()} 个已知时段，"
+          f"{series.index[0]} 至 {series.index[-1]}，每 {int(step.total_seconds() // 60)} 分钟一点。"
+          f"共 {len(origins)} 个可比窗口，每个窗口 {options.horizon} 个时段。误差单位为{unit}。\n")
     print("| 基线 | 平均绝对误差 | 均方根误差 | 平均偏差 | 平均绝对百分比误差 |")
     print("|:--|--:|--:|--:|--:|")
-    print("\n".join(rows))
+    scores = {}
+    for model, (predicted, observed) in results.items():
+        score = metrics(predicted - observed, observed)
+        scores[model] = score["mae"]
+        mape = f"{score['mape'] * 100:.1f}%" if score["mape"] is not None else "—"
+        print(f"| {models[model]} | {score['mae']:.2f} | {score['rmse']:.2f} | {score['bias']:+.2f} | {mape} |")
+    best = min(scores, key=scores.get)
     foreseen, actual = results[best]
-    share, band = covered(foreseen, actual, day, options.interval)
-    said = dict(models)[best]
-    if share is None:
-        print(f"\n**预测区间**：回测次数还不够算覆盖率（至少要两天的回测），没有给区间。")
+    errors = np.abs(foreseen - actual)
+    coverage = covered(errors, origins, options.interval)
+    half = float(np.quantile(errors, options.interval / 100)) if coverage is not None else None
+    if coverage is None:
+        print("\n已完成的早期窗口不足以验证区间覆盖率。")
     else:
-        print(f"\n**预测区间**：用「{said}」。区间的半宽取每个回测起点之前误差的 {options.interval:g}% 分位数；"
-              f"回测中实际值落在区间内的比例是 {share * 100:.1f}%（名义 {options.interval:g}%），半宽的中位数是 {band:.2f} {unit}。")
-    # The forecast for what comes next, from the end of the table.
-    at = len(values) - len(values) % day
-    last = values[at - day:at]
-    if np.isnan(last).any():
-        print("\n最后一天的数值不全，没有给出接下来的预测。")
-        return
-    ahead = forecast(np.nan_to_num(values, nan=float(np.nanmean(values))), at, min(options.horizon, day * 7), best, day, options.train)
-    start = series.index[-1] + step
-    half = float(np.quantile(np.abs(foreseen - actual), options.interval / 100))
-    times = pd.date_range(start, periods=len(ahead), freq=step)
-    print(f"\n**接下来的 {len(ahead)} 个时段**（{times[0]:%Y-%m-%d %H:%M} 至 {times[-1]:%Y-%m-%d %H:%M}）："
-          f"最低 {ahead.min():.2f}、最高 {ahead.max():.2f}、平均 {ahead.mean():.2f} {unit}；"
-          f"按 {options.interval:g}% 的区间，上下各加 {half:.2f} {unit}。")
+        print(f"\n「{models[best]}」的滚动区间覆盖率为 {coverage:.1%}（名义 {options.interval:g}%），"
+              f"当前区间半宽 {half:.2f} {unit}。")
+    ahead = forecast(values, len(values), options.horizon, best, day, options.train)
+    if not np.isfinite(ahead).all():
+        parser.error("误差最低的基线缺少最新输入，已保留回测结果。请先核实历史缺测。")
+    times = pd.date_range(series.index[-1] + step, periods=len(ahead), freq=step)
+    print(f"\n**接下来 {len(ahead)} 个时段** 采用「{models[best]}」，{times[0]} 至 {times[-1]}。"
+          f"最小 {ahead.min():.2f}，最大 {ahead.max():.2f}，平均 {ahead.mean():.2f} {unit}。")
     if options.out:
-        pd.DataFrame({"time": times, "forecast": ahead, "lower": ahead - half, "upper": ahead + half, "baseline": said}
-                     ).to_csv(options.out, index=False, encoding="utf-8-sig")
+        pd.DataFrame({"time": times, "forecast": ahead,
+                      "lower": ahead - half if half is not None else None,
+                      "upper": ahead + half if half is not None else None,
+                      "baseline": models[best], "unit": unit}).to_csv(options.out, index=False, encoding="utf-8-sig")
         print(f"预测已写入 {options.out}。")
-    print("\n说明：这些是历史基线，不是对价格的判断；回测误差只说明过去错得多少，情况变化时会更大。")
+    print("\n预测采用历史基线。市场规则、供需和天气变化需要另行复核。")
 
 
 if __name__ == "__main__":

@@ -9,6 +9,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 import numpy as np
 import pandas as pd
@@ -60,6 +61,36 @@ class TableTest(unittest.TestCase):
             self.assertIn("realtime", read_table(path, "实时").columns)
             self.assertIn("ahead", read_table(path, "日前").columns)
 
+    def test_price_unit_and_reference_power_series_are_distinguished(self):
+        with tempfile.TemporaryDirectory() as folder:
+            path = Path(folder) / "market.xlsx"
+            pd.DataFrame({
+                "时间": ["2026-12-01 23:00", "2026-12-01 24:00"],
+                "日前价格(元/兆瓦时)": [3, 4], "实时价格(元/千瓦时)": [0.1, 0.2],
+                "负荷(MW)": [50, 60], "日前风电预测(MW)": [14, 25],
+                "风电实际(kW)": [13000, 14000], "新能源(MW)": [20, 30], "可用供应(MW)": [70, 75],
+            }).to_excel(path, index=False)
+            out = read_table(path)
+            self.assertEqual(out["ahead"].tolist(), [3, 4])
+            self.assertEqual(out["realtime"].tolist(), [100, 200])
+            self.assertEqual(out["wind"].tolist(), [13, 14])
+            self.assertEqual(out.index[-1], pd.Timestamp("2026-12-02"))
+            spread, _ = forecasts.read_series(path, "价差")
+            self.assertEqual(spread.tolist(), [-97, -196])
+            net, _ = forecasts.read_series(path, "净负荷")
+            self.assertEqual(net.tolist(), [30, 30])
+
+    def test_unknown_interval_and_duplicate_timestamps_fail(self):
+        with tempfile.TemporaryDirectory() as folder:
+            path = Path(folder) / "price.csv"
+            path.write_text("日期,时段,价格\n2026-11-27,1,100\n2026-11-27,2,101\n", encoding="utf-8")
+            with self.assertRaisesRegex(ValueError, "--periods-per-day"):
+                read_table(path)
+            self.assertEqual(read_table(path, periods_per_day=96).index[1].minute, 15)
+            path.write_text("日期,时段,价格\n2026-11-27,1,100\n2026-11-27,1,101\n", encoding="utf-8")
+            with self.assertRaisesRegex(ValueError, "重复时段"):
+                read_table(path, periods_per_day=96)
+
 
 class ForecastTest(unittest.TestCase):
     def test_the_baselines_forecast_from_the_past_alone(self):
@@ -70,20 +101,45 @@ class ForecastTest(unittest.TestCase):
 
     def test_the_back_test_counts_what_each_baseline_got_wrong(self):
         values = table(12)["ahead"].to_numpy()
-        results = forecasts.backtest(values, 24, 24, 1, ["persistence", "daily", "weekly"])
+        results, origins = forecasts.backtest(values, 24, 24, 1, ["persistence", "daily", "weekly"])
         foreseen, actual = results["weekly"]
         # The table repeats every day, so the week before is exactly right.
         self.assertEqual(np.abs(foreseen - actual).max(), 0)
-        self.assertEqual(foreseen.shape, (4, 24))
+        self.assertEqual(foreseen.shape, (5, 24))
         score = forecasts.metrics(foreseen - actual, actual)
         self.assertEqual((score["mae"], score["mape"], score["bias"]), (0, 0, 0))
-        share, band = forecasts.covered(foreseen, actual, 24, 90)
-        self.assertEqual((share, band), (1.0, 0.0))
+        self.assertEqual(forecasts.covered(np.abs(foreseen - actual), origins, 90), 1.0)
         # Persistence is wrong wherever the price moves.
         foreseen, actual = results["persistence"]
         self.assertGreater(np.abs(foreseen - actual).mean(), 50)
-        with self.assertRaises(SystemExit):
+        with self.assertRaises(ValueError):
             forecasts.backtest(values[:5 * 24], 24, 24, 14, ["daily"])
+
+    def test_multi_day_forecasts_never_read_observations_after_the_origin(self):
+        values = np.arange(16 * 24, dtype=float)
+        at = 8 * 24
+        changed = values.copy()
+        changed[at:] += 10000
+        for model in ("daily", "weekly", "persistence"):
+            np.testing.assert_array_equal(forecasts.forecast(values, at, 8 * 24, model, 24, 3),
+                                          forecasts.forecast(changed, at, 8 * 24, model, 24, 3))
+
+    def test_prediction_intervals_skip_unobserved_parts_of_earlier_windows(self):
+        errors = np.asarray([[1, 1, 1, 1], [100, 100, 100, 100], [10, 10, 10, 10]])
+        self.assertIsNone(forecasts.covered(errors[:2], np.array([8, 10]), 90))
+        self.assertEqual(forecasts.covered(errors, np.array([8, 10, 12]), 90), 0.0)
+
+    def test_partial_day_export_starts_after_the_last_interval(self):
+        with tempfile.TemporaryDirectory() as folder:
+            path, output = Path(folder) / "price.csv", Path(folder) / "forecast.csv"
+            source = table(12).iloc[:11 * 24 + 6]
+            source.rename(columns={"ahead": "日前价格", "realtime": "实时价格"}).to_csv(path, index_label="时间")
+            with patch.object(sys, "argv", ["forecasts.py", str(path), "--train", "2", "--horizon", "4",
+                                            "--out", str(output)]), contextlib.redirect_stdout(io.StringIO()):
+                forecasts.main()
+            result = pd.read_csv(output, parse_dates=["time"])
+            self.assertEqual(result["time"].iloc[0], source.index[-1] + pd.Timedelta(hours=1))
+            self.assertEqual(result["forecast"].tolist(), SHAPE[6:10].tolist())
 
     def test_a_percentage_error_is_not_given_where_a_price_crosses_zero(self):
         score = forecasts.metrics(np.array([1.0, -1.0]), np.array([0.0, 5.0]))
@@ -131,6 +187,22 @@ class BacktestTest(unittest.TestCase):
         weak = backtest.storage_bound(prices, 1.0, 10.0, 400.0, 100.0)
         # Ten megawatts move but 80 MWh in the eight cheap hours, and as much out in the dear ones.
         self.assertAlmostEqual(weak["value"], 80 * (1000 - 100), places=0)
+        capped = backtest.storage_bound(prices, 1.0, 4.0, 400.0, 90.0)
+        self.assertEqual(capped["value"], 0.0)
+
+    def test_a_partial_end_labeled_day_does_not_receive_a_full_daily_volume(self):
+        with tempfile.TemporaryDirectory() as folder:
+            path = Path(folder) / "price.csv"
+            hours = list(range(1, 25))
+            rows = ["日期,时段,日前价格,实时价格"]
+            rows += [f"2026-11-01,{hour:02}:00,100,400" for hour in hours]
+            rows += [f"2026-11-02,{hour:02}:00,500,200" for hour in hours[:8]]
+            path.write_text("\n".join(rows) + "\n", encoding="utf-8")
+            out = io.StringIO()
+            with patch.object(sys, "argv", ["backtest.py", str(path), "--load", "1000"]), contextlib.redirect_stdout(out):
+                backtest.main()
+            self.assertIn("排除 1 个价格不完整的交割日", out.getvalue())
+            self.assertIn("表里最省的比例是 1.00，日均 100000.00 元", out.getvalue())
 
 
 if __name__ == "__main__":

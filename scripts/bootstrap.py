@@ -113,12 +113,19 @@ def verify_source_data(source: Path) -> None:
         raise SystemExit(f"本地知识库文件检查失败：{error}") from None
 
 
-def deploy_and_check(project: Path, source: Path, directories: list[str], *, no_skills=False) -> None:
-    verify_source_data(source)
+def deploy_command(project: Path, source: Path, directories: list[str], hosts: tuple[str, ...] = ()) -> list[str]:
     # Keep the historical flag so an older checkout can never start its native installer.
     command = [sys.executable, str(source / "scripts" / "deploy.py"), "--project", str(project), "--no-tool"]
     for directory in directories:
         command.extend(("--skills-dir", directory))
+    for host in hosts:
+        command.extend(("--host", host))
+    return command
+
+
+def deploy_and_check(project: Path, source: Path, directories: list[str], *, no_skills=False, hosts=()) -> None:
+    verify_source_data(source)
+    command = deploy_command(project, source, directories, hosts)
     if no_skills:
         command.append("--no-skills")
     result = subprocess.run(command, cwd=source)
@@ -210,12 +217,6 @@ def update_candidate(source: Path, current: str, preferred: str, log_path: Path)
     raise SystemExit("没有可安全快进的公开镜像。\n" + "\n".join(errors))
 
 
-def skill_directories(record: dict, requested: list[str]) -> list[str]:
-    installed = record.get("skills", {})
-    recorded = record.get("skillsDirs", []) if isinstance(installed, list) else list(installed)
-    return list(dict.fromkeys([*recorded, *requested]))
-
-
 def resume_checkout(project: Path, source: Path, preferred: str) -> str:
     """Refresh an interrupted bootstrap's clean official main checkout."""
     origin = origin_mirror(source)
@@ -245,7 +246,7 @@ def resume_checkout(project: Path, source: Path, preferred: str) -> str:
     return mirror
 
 
-def update(project: Path, preferred: str | None, directories: list[str], check_only: bool) -> None:
+def update(project: Path, preferred: str | None, directories: list[str], check_only: bool, *, hosts=()) -> None:
     if not (project / MANIFEST).is_file():
         raise SystemExit("当前目录没有部署记录。请先运行 bootstrap.py 安装框架。")
     record = install_record(project)
@@ -259,15 +260,17 @@ def update(project: Path, preferred: str | None, directories: list[str], check_o
     if status.returncode or (status.stdout and not check_only):
         raise SystemExit("框架源码有未提交的修改。请先提交或保存这些修改，再执行升级。")
     current = local_git(source, "rev-parse", "HEAD").stdout.strip()
-    directories = skill_directories(record, directories)
     with tempfile.TemporaryDirectory(dir=project, prefix=".bailu-update-") as stage_name:
         stage = Path(stage_name)
         candidate = update_candidate(source, current, preferred or origin, stage / "git.log")
         if candidate is None:
             print(f"当前框架 {current[:12]} 已是本次检查可用的版本。")
-            return
-        tip, mirror = candidate
-        print(f"{mirror} 提供更新 {current[:12]} → {tip[:12]}。")
+            if check_only or not (directories or hosts):
+                return
+            tip = current
+        else:
+            tip, mirror = candidate
+            print(f"{mirror} 提供更新 {current[:12]} → {tip[:12]}。")
         if check_only:
             return
         preview = stage / "candidate"
@@ -285,7 +288,7 @@ def update(project: Path, preferred: str | None, directories: list[str], check_o
             except FileExistsError:
                 raise SystemExit(f"已有升级正在应用。若上次异常中止，确认没有升级进程后移除 {lock}。") from None
             try:
-                apply_update(project, source, tip, current, directories, preview)
+                apply_update(project, source, tip, current, directories, preview, hosts=hosts)
             finally:
                 lock.rmdir()
         finally:
@@ -293,14 +296,21 @@ def update(project: Path, preferred: str | None, directories: list[str], check_o
 
 
 def apply_update(project: Path, source: Path, tip: str, current: str, directories: list[str],
-                 preview: Path) -> None:
+                 preview: Path, *, hosts=()) -> None:
     if local_git(source, "rev-parse", "HEAD").stdout.strip() != current:
         raise SystemExit("预检期间框架版本发生变化，请重新检查更新。")
     status = local_git(source, "status", "--porcelain", "--untracked-files=no")
     if status.returncode or status.stdout:
         raise SystemExit("预检期间框架源码发生修改，请保存修改后重试。")
+    # The candidate installer knows exactly which project adapters it writes.
+    # Ask it to plan without writing so rollback includes new host paths too.
+    planned = subprocess.run([*deploy_command(project, preview, directories, hosts), "--plan"], cwd=preview,
+                             capture_output=True, text=True, encoding="utf-8", errors="replace")
+    if planned.returncode:
+        raise SystemExit(planned.stderr.strip() or planned.stdout.strip() or "无法预检部署路径。")
+    plan = json.loads(planned.stdout)
     names = {entry.parent.name for entry in (preview / "skills").glob("*/*/SKILL.md")}
-    files = [project / name for name in (MANIFEST, "AGENTS.md", "CLAUDE.md", "GEMINI.md") if name != "AGENTS.md" or project != source]
+    files = [project / name for name in [MANIFEST, *plan["rules"]] if name != "AGENTS.md" or project != source]
     legacy_name = ".pi/extensions/bailu-ask-user.ts"
     legacy = project / legacy_name
     record = install_record(project)
@@ -315,7 +325,7 @@ def apply_update(project: Path, source: Path, tip: str, current: str, directorie
         if path.relative_to(project).as_posix() in registered and path.resolve() == path and path.is_file():
             legacy_binaries.add(path.relative_to(project))
             files.append(path)
-    files.extend(project_path(project, directory) / name for directory in directories for name in sorted(names))
+    files.extend(project_path(project, directory) / name for directory in plan["skills"] for name in sorted(names))
     relative = [path.relative_to(project) for path in dict.fromkeys(files)]
     backup = project_path(source, ".bailu/update-backups/" + uuid4().hex[:12])
     snapshots = {name: (preview.parent / "retired-tools" if name in legacy_binaries else backup / "before") / name
@@ -335,7 +345,7 @@ def apply_update(project: Path, source: Path, tip: str, current: str, directorie
     if merged.returncode:
         raise SystemExit(merged.stderr.strip() or merged.stdout.strip())
     try:
-        deploy_and_check(project, source, directories, no_skills=not directories)
+        deploy_and_check(project, source, directories, hosts=hosts)
     except (OSError, ValueError, KeyError, SystemExit, KeyboardInterrupt) as error:
         reverted = local_git(source, "reset", "--keep", current)
         if reverted.returncode:
@@ -366,6 +376,7 @@ def main() -> None:
     parser.add_argument("--project", type=Path, default=Path.cwd(), help="要部署的现有项目目录")
     parser.add_argument("--mirror", choices=MIRRORS, help="首选镜像，失败后尝试另一个")
     parser.add_argument("--skills-dir", action="append", default=[], help="项目内的技能目录，可重复指定")
+    parser.add_argument("--host", action="append", default=[], help="项目级宿主适配，例如 workbuddy 或 claude-code，可重复")
     mode = parser.add_mutually_exclusive_group()
     mode.add_argument("--check-update", action="store_true", help="检查是否能从公开镜像快进升级")
     mode.add_argument("--update", action="store_true", help="先验收新版本，再升级当前部署")
@@ -376,14 +387,14 @@ def main() -> None:
     if not project.is_dir() or project == home or project in home.parents:
         raise SystemExit(f"请选择一个现有的独立项目目录：{project}")
     if args.check_update or args.update:
-        update(project, args.mirror, args.skills_dir, args.check_update)
+        update(project, args.mirror, args.skills_dir, args.check_update, hosts=args.host)
         return
     existed = complete_checkout(project) or complete_checkout(project / "bailu-power-trading")
     source, mirror = checkout(project, args.mirror or "github")
     if existed:
         mirror = resume_checkout(project, source, mirror)
     print(f"源码目录 {source}（{mirror}）")
-    deploy_and_check(project, source, args.skills_dir)
+    deploy_and_check(project, source, args.skills_dir, hosts=args.host)
 
 
 if __name__ == "__main__":
