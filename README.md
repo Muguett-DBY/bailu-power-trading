@@ -2,45 +2,47 @@
 
 [English](README.en.md)
 
-给任何 AI agent 用的电力交易工作环境：**技能、知识库、分省电价参数、计算工具和文档**。在自己的 agent 里打开一个空文件夹，发一段提示词，整套东西就部署在这个文件夹里。数字由程序算，条文出自原文。
+给任何 AI agent 用的电力交易工作环境：**技能、知识库、官方文件库、分省电价参数、计算工具和台账**。在自己的 agent 里打开一个空文件夹，发一句话，整套东西就部署在这个文件夹里。数字由程序算，条文出自原文。
 
-它从 [Bailu.SI](https://github.com/Muguett-DBY) 电力交易桌面助手里抽出来；桌面程序基于这套框架构建。
+它从 Bailu.SI 电力交易桌面助手里抽出来；桌面程序基于这套框架构建。
 
-## 一分钟部署
+## 一句话部署
 
-在 Codex、Claude Code、WorkBuddy、Cursor、pi 等任何能运行命令、读写文件的 agent 里打开一个文件夹，把下面这段原样发给它：
+在 Codex、Claude Code、WorkBuddy、Cursor、pi 等任何能运行命令、读写文件的 agent 里打开一个文件夹，把下面这句原样发给它：
 
 ```text
-请把当前文件夹配置成我的电力交易工作环境，全部放在本文件夹内，不要安装任何全局的东西，也不要改动本文件夹之外的文件。
-
-1. 获取框架：当前文件夹是空的就执行 git clone https://github.com/Muguett-DBY/bailu-power-trading.git . ；否则克隆到 ./bailu-power-trading/ 。网络不通时告诉我，不要自行找别的来源。
-2. 完整读一遍框架里的 AGENTS.md（克隆在子文件夹时是 bailu-power-trading/AGENTS.md），之后在这个项目里一直遵守它。
-3. 在框架目录里运行 python scripts/deploy.py（Windows 上没有 python 就用 py）。它会把技能复制到本项目、放好 bailu 工具并自检，记下它输出的路径和卸载方法。如果你读取项目级技能的目录不是 .agents/skills，用 --skills-dir 指明你的目录。
-4. 自检通过后，用几句话告诉我：现在可以问哪些事、bailu 的路径是什么。任何一步失败，原样告诉我错误，不要跳过，也不要假装成功。
+请把当前文件夹配置成我的电力交易工作环境：从 Gitee（https://gitee.com/Muguett/bailu-power-trading.git ，打不开就改用 GitHub 的 https://github.com/Muguett-DBY/bailu-power-trading.git ）把框架克隆到本文件夹（文件夹是空的就克隆到当前目录，否则克隆到 ./bailu-power-trading/），完整读其中的 AGENTS.md，在框架目录运行 python scripts/deploy.py 完成部署；一切都只放在本文件夹内，不要安装任何全局的东西，也不要改动本文件夹之外的文件；部署完成后把结果告诉我，任何一步失败就原样告诉我，不要跳过。
 ```
+
+agent 做完会告诉你「部署完成」和 `bailu` 工具的路径。之后在这个文件夹里的每一次新会话，agent 都会从项目的 `AGENTS.md` 读到工作守则。
+
+需要 Python 3.10 或更新版本（部署只用标准库）。`bailu` 工具是预编译好的，Windows、Linux、macOS 都有，从 Gitee、GitHub 或 jsDelivr 取，取回时校验 SHA-256，不需要装 Go。
 
 部署是**绿色**的：所有东西都在当前文件夹里，不装全局软件、不改项目之外的任何文件。
 
 | 放进项目的东西 | 位置 | 作用 |
 | --- | --- | --- |
-| 技能 | `.agents/skills/`（或你的 agent 自己的技能目录） | 19 个技能，agent 按任务自动加载 |
-| 规则 | 项目根目录的 `AGENTS.md`（Claude Code 另有 `CLAUDE.md` 指向它） | 告诉 agent 读框架的守则 |
-| 框架 | `bailu-power-trading/` | 知识库、工具、脚本 |
+| 技能 | `.agents/skills/`（或你的 agent 自己的技能目录） | 23 个技能，agent 按任务自动加载 |
+| 规则 | 项目根目录的 `AGENTS.md`（Claude Code 另有 `CLAUDE.md` 指向它） | 告诉 agent 读框架的守则、`bailu` 在哪里 |
+| 框架 | `bailu-power-trading/` | 知识库、文件库、工具、脚本 |
 | 记录 | `.bailu-install.json` | 记下放入了什么，卸载时用 |
 
 卸载：在框架目录运行 `python scripts/deploy.py --uninstall`，它会移除放入的技能、规则文件和工具；框架文件夹本身保留，可以自行删除。
-
-需要 Python 3.9 或更新版本（只用标准库）和访问 GitHub 的网络。`bailu` 工具是预编译好的，Windows、Linux、macOS 都有，不需要装 Go。
 
 ## 能做什么
 
 | 你要做的 | 用到的 |
 | --- | --- |
-| 问概念和规则：现货与中长期市场、节点边际电价、差价合约、日清月结、辅助服务、绿电绿证 | 手册检索 `bailu handbook`，技能 `concept-explainer`、`policy-lookup` |
+| 问概念和规则：现货与中长期市场、节点边际电价、差价合约、日清月结、辅助服务、绿电绿证；各省的现货限价、申报时序、结算方式、分时电价、容量电价、辅助服务 | 手册检索 `bailu handbook`，官方文件库 `bailu docs`，技能 `concept-explainer`、`policy-lookup` |
 | 查分省电价参数：某省两部制输配电价、需量电价、线损率、煤电容量电价 | `bailu tariff` |
 | 算账：现货结算、偏差考核、合约分解、分时电费、基本电费、功率因数、履约保障额度、零售套餐比价、售电保本点、储能收益、负荷平移、结算差异桥、申报前校验 | `bailu calc` 的 13 种计算，技能 `spot-settlement` 等 7 个 |
+| 申报前检查曲线：负荷曲线、报价分段、储能充放电计划是否满足上下限、爬坡、步长、价格限和 SOC 范围 | `bailu curve`，技能 `declaration-checklist` |
+| 记台账：成交合约、每日申报、每天的实际用电 | `bailu ledger`，技能 `trading-ledger` |
+| 复盘：中长期覆盖率、偏差、比全按实时价结算省了多少钱、钱省在哪里 | `bailu review`，技能 `trading-review` |
+| 体检电价表和负荷表，算风险指标：分位数、VaR、CVaR、波动、尾部成本、回撤 | `bailu check`、`bailu risk`，技能 `price-risk-check` |
 | 分析交易平台的电价表：均价、最高最低、按月和按时段统计与比较、月度分析报告 | `bailu table`，技能 `monthly-price-report` |
 | 查本省政策文件的条款、核对电费账单 | `bailu docs`，技能 `policy-lookup`、`bill-review` |
+| 基线预测与回测：电价、负荷、出力的三种基线和滚动回测误差、预测区间；日前与实时的价差、日前申报比例、储能上界 | 分析层 `analysis/`（可选） |
 | 读写 Word、Excel、PowerPoint、PDF | 技能 `docx`、`xlsx`、`pptx`、`pdf` |
 | 做海报、演示、网页的设计 | 技能 `canvas-design`、`brand-guidelines`、`theme-factory`、`frontend-design`、`web-design-guidelines` |
 
@@ -48,25 +50,30 @@
 
 - 「什么是节点边际电价？」
 - 「江苏两部制输配电价是多少？」
-- 「合约电量1000万千瓦时，合约价0.38元/千瓦时，实际用电1100万千瓦时，日前价0.35元/千瓦时，实时价0.45元/千瓦时，帮我算一下现货结算」
+- 「辽宁现货的限价是怎么管的？」「甘肃调频费用由谁分摊？」
+- 「合约电量1000万千瓦时，合约价0.38元/千瓦时，实际用电1100万千瓦时，日前价0.35元/千瓦时，实时价0.45元/千瓦时，帮我算一下现货结算」，接着问「那偏差电量是多少？」
 - 「变压器容量1600千伏安，容量电价33元/千伏安·月，需量电价52元/千瓦·月，合同最大需量1096千瓦，实际最大需量1150千瓦，基本电费按哪种方式省？」
-- 「比较8月和7月的日前均价」（附上电价表）
+- 「这条申报曲线能不能报？上下限 0 到 100 兆瓦，爬坡 10 兆瓦」（附上曲线文件）
+- 「这个月比全按实时价买省了多少钱？」
 
 ## 目录
 
 ```
-AGENTS.md              给 agent 的工作守则：铁律、命令、技能清单
+AGENTS.md              给 agent 的工作守则：铁律、全部命令、技能清单、知识库范围
 skills/
-  power-trading/       10 个电力交易技能
+  power-trading/       14 个电力交易技能
   office/              4 个办公技能（来自 anthropics/skills）
   design/              5 个设计技能
   UPSTREAM.md          上游技能的来源、提交和许可证
 knowledge/
-  handbook/            手册：18 个文件、436 个主题
+  handbook/            手册：31 个文件、625 个主题
+  documents/           官方文件库：87 份文件全文，catalogue.csv 是目录
   data/tariffs.txt     34 张省级电网输配电价表、煤电容量电价
 tools/bailu/           bailu 工具的 Go 源码和测试
+analysis/              可选的分析层：基线预测、回测
 scripts/
   deploy.py            部署与卸载
+  build_documents.py   从核验时取回的官方文件生成文件库
   fetch_cited_sources.py … merge_knowledge.py   知识库的核验与并入流程
 docs/                  计算器规格、同类产品调研、手册的研究稿（带逐条引文）
 LICENSE  NOTICE.md     MIT；第三方声明
@@ -76,34 +83,37 @@ LICENSE  NOTICE.md     MIT；第三方声明
 
 | 命令 | 做什么 |
 | --- | --- |
-| `bailu calc <种类> --message "<原话>"` | 算一种交易计算，数字从原话里读取；`bailu calc list` 列出 13 种 |
+| `bailu calc [种类] --message "<原话>"` | 算一种交易计算，数字从原话里读取；`bailu calc list` 列出 13 种 |
 | `bailu calc --message "<追问>" --earlier "<前面的原话>"` | 追问时沿用前面的数字 |
 | `bailu handbook "<问题>"` | 检索手册，返回主题原文和出处 |
 | `bailu tariff "<问题>"` | 查省级电网输配电价、线损率、煤电容量电价 |
+| `bailu docs <文件夹或文件> "<问题>"` | 在政策文件、账单、官方文件库里检索条款原文 |
+| `bailu check <表格文件>...` | 体检电价表、负荷表：缺值、重复、乱序、缺时段、负电价、离群值 |
 | `bailu table "<问题>" <电价表文件>...` | 统计或比较电价表（CSV、Excel） |
-| `bailu docs <文件夹或文件> "<问题>"` | 在政策文件、账单里检索条款原文 |
+| `bailu risk <电价表> [--mwh 1200]` | 风险指标：分位数、VaR、CVaR、波动、尾部成本、回撤 |
+| `bailu curve <曲线文件> [选项]` | 校验申报曲线、报价曲线、储能充放电曲线 |
+| `bailu ledger add/list …` | 记台账：申报、成交、计量 |
+| `bailu review [from=日期] [to=日期] [spot=实时价]` | 复盘：覆盖率、偏差、节省与归因 |
 | `bailu compute "<算式>"` | 精确四则运算 |
+| `bailu extract <文件>...` | 把 PDF、Word、文本转成纯文本 |
 | `bailu selfcheck` | 检查手册、电价表、计算器是否就绪 |
 
-从源码构建（可选）：在 `tools/bailu/` 里 `go build -o bailu .`，测试用 `go test ./...`。
+每个命令的写法和选项都在 `AGENTS.md` 里。从源码构建（可选）：在 `tools/bailu/` 里 `go build -o bailu .`，测试用 `go test ./...`。
 
 ## 知识库有多可靠
 
-- 手册的每个主题带关键词和「依据」一行，写明文件与条款。并入手册的研究稿共 1,358 条引文，逐条在下载到本地的官方原文里逐字查找，并核对它确实在所引的条款下：1,357 条相符，1 条的来源当时无法下载。
-- 内容出自国家发展改革委、国家能源局及其派出机构等公开发布的文件，核对时间 2026 年 11 月 26 日。它覆盖国家层面的规则，以及部分区域和省份的辅助服务细则、现货市场规则参数；省级主题写明适用范围和施行时间。
+- 手册的每个主题带关键词和「依据」一行，写明文件与条款。并入手册的研究稿共 2,250 条引文，逐条在下载到本地的官方原文里逐字查找，并核对它确实在所引的条款下，全部相符。
+- 内容出自国家发展改革委、国家能源局及其派出机构、省级主管部门公开发布的文件，核对时间 2026 年 11 月 27 日。国家层面覆盖现货、中长期、结算、零售、新能源、辅助服务、市场成员；省份和区域覆盖 辽宁、上海、福建、江西、河南、湖北、广东、重庆、甘肃、青海、宁夏、新疆、南方区域。省级主题的标题以省份或区域开头，写明适用范围和施行时间。
+- 官方文件库 `knowledge/documents/` 收着手册所依据的文件全文，`bailu docs knowledge/documents "问题"` 可以在里面检索。
 - 标着【口径】的是行业经验做法，没有官方文件依据，回答里会说明。
-- **没有的**：各省的分时时段、基金征收标准、偏差考核比例等经常调整的数值，以及任何实时行情。这些要由你把本省现行文件放进项目，agent 用 `bailu docs` 按原文回答。
+- **没有的**：各省分时电价的逐时段数值、基金征收标准、经常调整的考核比例等，以及任何实时行情。这些要由你把本省现行文件放进项目，agent 用 `bailu docs` 按原文回答。
 - 政策文件年年修订，使用前留意主题里写的施行时间。
 
-要补充或更新手册，流程在 `scripts/` 里：`fetch_cited_sources.py` 下载被引用的官方页面 → `go test`（在 `tools/bailu/` 里，设 `BAILU_VERIFY_STAGING=1`）逐字核对研究稿的引文 → `overlap.py` 查重 → `merge_knowledge.py` 并入。研究稿在 `docs/research/handbook/`，每个主题后面是它所依据的官方原文。
+要补充或更新手册，流程在 `scripts/` 里：`fetch_cited_sources.py` 下载被引用的官方页面 → `go test`（在 `tools/bailu/` 里，设 `BAILU_VERIFY_STAGING=1`）逐字核对研究稿的引文 → `overlap.py` 查重 → `merge_knowledge.py` 并入 → `build_documents.py` 重建文件库。研究稿在 `docs/research/handbook/`，写法见 `docs/research/RULES.md`。
 
 ## 测试情况
 
-**实测通过的**：pi 1.6.1 配 GLM 5.3 Flash（思考强度 max）和小米 MiMo 2.6 Flash（思考强度 max）。在一个空文件夹里只发上面那段提示词（中文提示词和英文提示词各测了一次），agent 自己完成了获取、阅读守则、部署和自检，汇报的路径和结果与实际一致。部署后追问「合约电量1000万千瓦时……帮我算一下现货结算」和「江苏两部制输配电价是多少？另外什么是节点边际电价？」，agent 调用 `bailu` 作答，表格和数字与工具输出一致，出处写明。
 
-**没有测过的**：Codex、WorkBuddy、Claude Code、Cursor 等。它们走的是同一段提示词和同一个部署脚本，技能目录不同的话由 agent 自己用 `--skills-dir` 指明；请在你的 agent 上试一次，有问题欢迎提 issue。
-
-**工具自身的测试**：`tools/bailu` 里 150 多个测试，覆盖 13 种计算的算式（每种都有照官方文件手算的用例）、数字读取、追问、分省电价表、约 150 道手册检索题、政策文件的条款检索，以及「技能引用的主题和命令都存在」。
 
 ## 许可证与致谢
 
@@ -111,6 +121,6 @@ MIT，见 [LICENSE](LICENSE)。上游技能、改写自的代码和参考过的�
 
 - 办公与设计技能来自 [anthropics/skills](https://github.com/anthropics/skills)（Apache-2.0）和 [vercel-labs/agent-skills](https://github.com/vercel-labs/agent-skills)（MIT）。
 - 电价表的列识别流程改写自 [GreenGrid](https://github.com/fen861695-code/greengrid)（Apache-2.0）。
-- [energy-skills](https://github.com/Weisg1999/energy-skills)（CC BY-NC 4.0）只作过选题思路的参考，没有收入它的文字、脚本或数据。
+- [energy-skills](https://github.com/Weisg1999/energy-skills)（CC BY-NC 4.0）和 [electric](https://github.com/mechanic-Q/electric) 只作过选题思路的参考，没有收入它们的文字、脚本或数据。
 
-办公技能运行时用到的 Python 库和命令行工具（LibreOffice、poppler 等）不随本框架分发，按各自 `SKILL.md` 的说明在需要时安装。
+办公技能运行时用到的 Python 库和命令行工具（LibreOffice、poppler 等）不随本框架分发，按各自 `SKILL.md` 的说明在需要时安装。分析层的依赖（pandas、numpy）只装在项目的 `analysis/.venv` 里。

@@ -1,7 +1,7 @@
 """Copy verified research from the staging folder into the handbook.
 
 Usage, from the project root:
-    uv run --frozen python scripts/merge_knowledge.py <staged file name> [<staged file name> ...]
+    python scripts/merge_knowledge.py <staged file name> [<staged file name> ...]
 
 Research on the handbook is kept under docs/research/handbook, one file a
 subject: its topics first, a "# 核验" section after them with the

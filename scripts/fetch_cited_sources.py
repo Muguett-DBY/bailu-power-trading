@@ -1,7 +1,7 @@
 """Keep the official pages and attachments that the handbook research cites.
 
 Usage, from the project root:
-    uv run --frozen python scripts/fetch_cited_sources.py [<research file name> ...]
+    python scripts/fetch_cited_sources.py [<research file name> ...]
 
 The research on the handbook is kept under docs/research/handbook, one file a
 subject, each topic followed by the sentences of the official document it

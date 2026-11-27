@@ -1,7 +1,7 @@
 """Write the embedded tariff tables from the verified data files.
 
 Usage, from the project root:
-    uv run --frozen python scripts/make_tariff_data.py
+    python scripts/make_tariff_data.py
 
 Reads knowledge/data/source/transmission-tariffs.json and coal-capacity-prices.json,
 which the extraction scripts there produced and verified against the

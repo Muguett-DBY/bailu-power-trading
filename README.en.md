@@ -2,115 +2,115 @@
 
 [中文](README.md)
 
-A power-trading work environment for any AI agent: **skills, a knowledge base, provincial price parameters, calculation tools and documents**. Open a folder in your own agent, send one prompt, and the whole thing is set up inside that folder. Figures are computed by the program; rules are quoted from their sources.
+A power-trading work environment for any AI agent: **skills, a knowledge base, a library of official documents, provincial price parameters, calculation tools and ledgers**. Open a folder in your own agent, send one sentence, and the whole thing is set up inside that folder. Figures are computed by the program; rules are quoted from their sources.
 
-It is taken out of [Bailu.SI](https://github.com/Muguett-DBY), a desktop assistant for electricity trading, which is built on this framework.
+It is taken out of Bailu.SI, a desktop assistant for electricity trading, which is built on this framework. The handbook, the document library and the tool's answers are in Chinese.
 
-## Deploy in a minute
+## Deploy with one sentence
 
 Open a folder in any agent that can run commands and read and write files — Codex, Claude Code, WorkBuddy, Cursor, pi and others — and send it this, as it is:
 
 ```text
-Set this folder up as my power-trading working environment. Keep everything inside this folder: install nothing globally and change no file outside it.
-
-1. Get the framework: if the folder is empty, run git clone https://github.com/Muguett-DBY/bailu-power-trading.git . ; otherwise clone it into ./bailu-power-trading/ . If the network fails, tell me; do not look for another source.
-2. Read the framework's AGENTS.md in full (bailu-power-trading/AGENTS.md when it was cloned into a subfolder) and follow it for as long as you work in this project.
-3. In the framework folder run python scripts/deploy.py (use py on Windows if python is missing). It copies the skills into this project, places the bailu tool and checks that all is in place; note the paths and the uninstall command it prints. If the directory where you read project skills is not .agents/skills, pass yours with --skills-dir.
-4. When the check passes, tell me in a few sentences what I can ask now and where bailu is. If any step fails, show me the error as it is; do not skip it or pretend it worked.
+Set this folder up as my electricity-trading workspace: clone the framework from Gitee (https://gitee.com/Muguett/bailu-power-trading.git , or from GitHub at https://github.com/Muguett-DBY/bailu-power-trading.git if that fails) into this folder (into the folder itself if it is empty, otherwise into ./bailu-power-trading/), read its AGENTS.md in full, then run python scripts/deploy.py inside the framework folder to deploy it; keep everything inside this folder, install nothing globally and change no file outside it; when the deployment is done tell me what it did, and if any step fails show me the error as it is instead of skipping it.
 ```
+
+When it is done the agent tells you the deployment is complete and where the `bailu` tool is. From then on, every new session in this folder finds the rules in the project's `AGENTS.md`.
+
+You need Python 3.10 or newer (the deployment uses the standard library only). `bailu` comes prebuilt for Windows, Linux and macOS, taken from Gitee, GitHub or jsDelivr and checked against SHA256SUMS; Go is not required.
 
 The deployment is **self-contained**: everything stays in the folder. No global software is installed and nothing outside the project is changed.
 
 | What lands in the project | Where | What it is for |
 | --- | --- | --- |
-| Skills | `.agents/skills/` (or your agent's own skills folder) | 19 skills the agent loads as the task needs |
-| Rules | `AGENTS.md` at the project root (`CLAUDE.md` points to it for Claude Code) | Tells the agent to read the framework's rules |
-| Framework | `bailu-power-trading/` | Knowledge base, tool, scripts |
+| Skills | `.agents/skills/` (or your agent's own skills folder) | 23 skills the agent loads as the task needs |
+| Rules | `AGENTS.md` at the project root (`CLAUDE.md` points to it for Claude Code) | Tells the agent to read the framework's rules and where `bailu` is |
+| Framework | `bailu-power-trading/` | Knowledge base, document library, tool, scripts |
 | Record | `.bailu-install.json` | What was added, for uninstalling |
 
 Uninstall: run `python scripts/deploy.py --uninstall` in the framework folder. It removes the skills, the rule files and the tool it added; the framework folder itself stays, delete it if you like.
-
-You need Python 3.9 or newer (standard library only) and access to GitHub. `bailu` comes prebuilt for Windows, Linux and macOS; Go is not required.
 
 ## What it does
 
 | You want to | What is used |
 | --- | --- |
-| Ask about concepts and rules: spot and medium- and long-term markets, nodal marginal prices, contracts for difference, daily-clearing monthly-settlement, ancillary services, green power and certificates | Handbook search `bailu handbook`; skills `concept-explainer`, `policy-lookup` |
+| Ask about concepts and rules: spot and medium- and long-term markets, nodal marginal prices, contracts for difference, daily-clearing monthly-settlement, ancillary services, green power; a province's spot price limits, declaration times, settlement, time-of-use prices, capacity prices, ancillary services | Handbook search `bailu handbook`; the document library `bailu docs`; skills `concept-explainer`, `policy-lookup` |
 | Look up provincial price parameters: a province's two-part transmission price, demand price, line-loss rate, coal capacity price | `bailu tariff` |
-| Calculate: spot settlement, deviation assessment, contract decomposition, time-of-use bills, basic charge, power factor, performance bond, retail package comparison, retailer break-even, storage revenue, load shifting, settlement bridge, pre-declaration check | 13 calculators of `bailu calc`; 7 skills such as `spot-settlement` |
-| Analyse a price table exported from a trading platform: means, highs and lows, monthly and hourly statistics and comparisons, a monthly report | `bailu table`; skill `monthly-price-report` |
-| Find a clause in provincial policy files, check an electricity bill | `bailu docs`; skills `policy-lookup`, `bill-review` |
-| Read and write Word, Excel, PowerPoint and PDF files | Skills `docx`, `xlsx`, `pptx`, `pdf` |
+| Compute: spot settlement, deviation assessment, contract decomposition, time-of-use bills, basic charge, power factor, guarantee deposits, retail package comparison, retailer break-even, storage revenue, load shifting, settlement bridge, pre-declaration check | The 13 calculators of `bailu calc`; 7 skills from `spot-settlement` on |
+| Check a curve before declaring: a load curve, a bid by price segment, a battery plan against bounds, ramp, step, price limits and state of charge | `bailu curve`; skill `declaration-checklist` |
+| Keep a ledger: contracts, daily declarations, daily metered energy | `bailu ledger`; skill `trading-ledger` |
+| Review a period: medium- and long-term coverage, deviation, what was saved against buying everything real-time, and where the saving came from | `bailu review`; skill `trading-review` |
+| Check a price or load table and measure risk: quantiles, VaR, CVaR, volatility, cost of the tail, drawdown | `bailu check`, `bailu risk`; skill `price-risk-check` |
+| Analyse a price table from a trading platform: means, highs and lows, statistics and comparisons by month and by time of day, a monthly report | `bailu table`; skill `monthly-price-report` |
+| Find a provision in provincial policy documents; check a bill | `bailu docs`; skills `policy-lookup`, `bill-review` |
+| Baseline forecasts and back-tests: three baselines for prices, load and output with rolling back-test errors and intervals; day-ahead versus real-time spread, day-ahead declaration share, a battery's upper bound | The optional analysis layer `analysis/` |
+| Read and write Word, Excel, PowerPoint, PDF | Skills `docx`, `xlsx`, `pptx`, `pdf` |
 | Design posters, presentations and pages | Skills `canvas-design`, `brand-guidelines`, `theme-factory`, `frontend-design`, `web-design-guidelines` |
-
-Questions you can ask straight away:
-
-- 什么是节点边际电价？ (What is a nodal marginal price?)
-- 江苏两部制输配电价是多少？ (What is Jiangsu's two-part transmission price?)
-- 合约电量1000万千瓦时，合约价0.38元/千瓦时，实际用电1100万千瓦时，日前价0.35元/千瓦时，实时价0.45元/千瓦时，帮我算一下现货结算 (a spot settlement from the figures in the question)
-- 变压器容量1600千伏安，容量电价33元/千伏安·月，需量电价52元/千瓦·月，合同最大需量1096千瓦，实际最大需量1150千瓦，基本电费按哪种方式省？ (by capacity or by demand: which basic charge is cheaper?)
-- 比较8月和7月的日前均价 (compare the day-ahead means of August and July), with a price table attached
 
 ## Layout
 
 ```
-AGENTS.md              The rules for the agent: what it must and must not do, the commands, the skills
+AGENTS.md              The rules for any agent: iron rules, every command, the skills, what the knowledge base covers
 skills/
-  power-trading/       10 skills on power trading
+  power-trading/       14 power-trading skills
   office/              4 office skills (from anthropics/skills)
   design/              5 design skills
-  UPSTREAM.md          Where the upstream skills come from, with commits and licenses
+  UPSTREAM.md          Where the upstream skills come from, at which commit, under which licence
 knowledge/
-  handbook/            The handbook: 18 files, 436 topics
-  data/tariffs.txt     34 provincial grid transmission price tables, coal capacity prices
-tools/bailu/           Go source and tests of the bailu tool
+  handbook/            The handbook: 31 files, 625 topics
+  documents/           Official documents: 87 full texts; catalogue.csv lists them
+  data/tariffs.txt     34 provincial transmission price tables, coal capacity prices
+tools/bailu/           The Go source and tests of the bailu tool
+analysis/              The optional analysis layer: baseline forecasts, back-tests
 scripts/
   deploy.py            Deploy and uninstall
-  fetch_cited_sources.py … merge_knowledge.py   Checking and merging of the knowledge base
-docs/                  Calculator specifications, a survey of similar products, the research drafts with their quotes
-LICENSE  NOTICE.md     MIT; third-party notices
+  build_documents.py   Build the document library from the official sources kept for verification
+  fetch_cited_sources.py … merge_knowledge.py   Checking and merging knowledge
+docs/                  Calculator specifications, a survey of similar projects, the research drafts with their quotes
+LICENSE  NOTICE.md     MIT; notices of third-party work
 ```
 
 ## The bailu tool
 
 | Command | What it does |
 | --- | --- |
-| `bailu calc <kind> --message "<what the user said>"` | Runs one calculator; the figures are read from the sentence. `bailu calc list` names the 13 kinds |
-| `bailu calc --message "<follow-up>" --earlier "<what was said before>"` | A follow-up keeps the figures of the conversation |
-| `bailu handbook "<question>"` | Searches the handbook and returns the topics with their sources |
-| `bailu tariff "<question>"` | Looks up a grid's transmission prices, line-loss rate, coal capacity price |
-| `bailu table "<question>" <price table file>...` | Statistics and comparisons of price tables (CSV, Excel) |
-| `bailu docs <folder or file> "<question>"` | Searches policy files and bills for the text of a clause |
-| `bailu compute "<expression>"` | Exact arithmetic |
-| `bailu selfcheck` | Says whether the handbook, the prices and the calculators answer |
+| `bailu calc [kind] --message "<what was said>"` | One trading calculation, its numbers read from the sentence; `bailu calc list` names the 13 |
+| `bailu calc --message "<follow-up>" --earlier "<earlier sentence>"` | A follow-up that keeps the numbers given before |
+| `bailu handbook "<question>"` | Searches the handbook; gives the topic's text and source |
+| `bailu tariff "<question>"` | Provincial transmission prices, line-loss rates, coal capacity prices |
+| `bailu docs <folder or file> "<question>"` | Finds provisions in policy documents, bills, the document library |
+| `bailu check <table>...` | What is wrong with a price or load table: empty cells, repeats, disorder, missing intervals, negative prices, outliers |
+| `bailu table "<question>" <table>...` | Statistics of and comparisons between price tables (CSV, Excel) |
+| `bailu risk <table> [--mwh 1200]` | Risk: quantiles, VaR, CVaR, volatility, cost of the tail, drawdown |
+| `bailu curve <curve> [options]` | A declaration, a bid or a battery plan against its limits |
+| `bailu ledger add/list …` | The ledger: declarations, trades, metered energy |
+| `bailu review [from=date] [to=date] [spot=price]` | Review: coverage, deviation, saving and where it came from |
+| `bailu compute "<sum>"` | Exact arithmetic |
+| `bailu extract <file>...` | PDF, Word and text as plain text |
+| `bailu selfcheck` | Whether the handbook, the prices and the calculators answer |
 
-To build it from source (optional): in `tools/bailu/`, `go build -o bailu .`; the tests are `go test ./...`.
+How each command is written is in `AGENTS.md`. To build from source (optional): in `tools/bailu/`, `go build -o bailu .`; tests with `go test ./...`.
 
-## How much the knowledge base can be trusted
+## How far the knowledge base can be trusted
 
-- Every topic of the handbook carries keywords and a line naming the document and article it rests on. Of the 1,358 quotes in the research merged into it, each was looked up word for word in the official text downloaded from its source and checked to sit under the article cited: 1,357 match; one source could not be downloaded at the time.
-- The content comes from documents published by the National Development and Reform Commission, the National Energy Administration and their regional offices, checked on 26 November 2026. It covers the national rules and, in part, regional ancillary-service rules and provincial spot-market parameters; a provincial topic names the place and the date it holds for.
-- What is marked 【口径】 is industry practice with no official document behind it; answers say so.
-- **What is not in it**: figures that provinces change often — time-of-use periods, fund surcharges, deviation assessment rates — and anything live. For those, put the province's current documents into the project and the agent answers from their text with `bailu docs`.
-- Policy documents are revised from year to year; mind the effective date a topic names.
+- Every topic of the handbook has keywords and a line naming the document and provision it rests on. The research merged into it holds 2,250 quotes, each looked up word for word in a copy of the official document downloaded for the purpose and checked to lie under the provision cited; all matched.
+- The content comes from documents published by the National Development and Reform Commission, the National Energy Administration and its regional offices, and provincial authorities; checked on 27 November 2026. Nationally it covers the spot, medium- and long-term, settlement, retail, renewable and ancillary-service markets and market members; provincially it covers 辽宁、上海、福建、江西、河南、湖北、广东、重庆、甘肃、青海、宁夏、新疆、南方区域. A provincial topic is named after its province, and says what it holds for and from when.
+- The document library under `knowledge/documents/` holds the full texts the handbook rests on; `bailu docs knowledge/documents "<question>"` searches them.
+- What is marked 【口径】 is practice of the trade without a document behind it, and the answer says so.
+- **What it does not have**: the hour-by-hour time-of-use prices of each province, fund surcharges, assessment rates that change often — and any live price. For these, put your province's current documents into the project and the agent answers from their text with `bailu docs`.
+- Policy documents are revised every year; mind the date a topic says it holds from.
 
-To add to or update the handbook, the pipeline is in `scripts/`: `fetch_cited_sources.py` downloads the official pages cited → `go test` (in `tools/bailu/`, with `BAILU_VERIFY_STAGING=1`) checks each quote of a research draft word for word → `overlap.py` lists overlaps → `merge_knowledge.py` merges. The research drafts are in `docs/research/handbook/`, each topic followed by the official sentences it rests on.
+To add to or update the handbook, the pipeline is in `scripts/`: `fetch_cited_sources.py` downloads the official pages cited → `go test` in `tools/bailu/` with `BAILU_VERIFY_STAGING=1` checks each quote of the drafts word for word → `overlap.py` finds overlaps → `merge_knowledge.py` merges → `build_documents.py` rebuilds the library. The drafts are in `docs/research/handbook/`; how to write one is in `docs/research/RULES.md` (Chinese).
 
 ## What was tested
 
-**Passed**: pi 1.6.1 with GLM 5.3 Flash (thinking level max) and with Xiaomi MiMo 2.6 Flash (thinking level max). In an empty folder, with nothing but the prompt above (once in Chinese, once in English), the agent fetched the framework, read the rules, deployed and checked it by itself, and what it reported matched what was on disk. Asked then for a spot settlement from figures in the question, and for Jiangsu's two-part transmission price together with what a nodal marginal price is, the agent answered through `bailu`, with tables and figures identical to the tool's output and the sources named.
 
-**Not tested**: Codex, WorkBuddy, Claude Code, Cursor and others. They get the same prompt and the same deployment script; an agent with another skills folder passes it with `--skills-dir`. Try it on yours and open an issue if something goes wrong.
 
-**The tool's own tests**: more than 150 tests in `tools/bailu`, covering the arithmetic of the 13 calculators (each with cases worked out by hand from the official documents), the reading of figures, follow-ups, the provincial price tables, about 150 handbook retrieval questions, the search for clauses in policy files, and that every topic and command a skill names exists.
+## Licence and thanks
 
-## License and acknowledgements
+MIT, see [LICENSE](LICENSE). Upstream skills, adapted code and projects consulted are in [NOTICE.md](NOTICE.md):
 
-MIT; see [LICENSE](LICENSE). The upstream skills, the code that was adapted and the projects that were consulted are in [NOTICE.md](NOTICE.md):
+- Office and design skills from [anthropics/skills](https://github.com/anthropics/skills) (Apache-2.0) and [vercel-labs/agent-skills](https://github.com/vercel-labs/agent-skills) (MIT).
+- The way the columns of a price table are recognised is adapted from [GreenGrid](https://github.com/fen861695-code/greengrid) (Apache-2.0).
+- [energy-skills](https://github.com/Weisg1999/energy-skills) (CC BY-NC 4.0) and [electric](https://github.com/mechanic-Q/electric) were consulted for what to cover only; none of their text, scripts or data is here.
 
-- Office and design skills come from [anthropics/skills](https://github.com/anthropics/skills) (Apache-2.0) and [vercel-labs/agent-skills](https://github.com/vercel-labs/agent-skills) (MIT).
-- The flow that recognises the columns of a price table was adapted from [GreenGrid](https://github.com/fen861695-code/greengrid) (Apache-2.0).
-- [energy-skills](https://github.com/Weisg1999/energy-skills) (CC BY-NC 4.0) was a reference for which topics to cover only; none of its text, scripts or data is included.
-
-The Python libraries and command-line tools the office skills call at run time (LibreOffice, poppler and others) are not part of this framework; install them when needed, as each `SKILL.md` says.
+The Python libraries and command-line tools the office skills use at run time (LibreOffice, poppler and others) are not distributed with the framework; install them as each `SKILL.md` says, when needed. The analysis layer's dependencies (pandas, numpy) live only in the project's `analysis/.venv`.

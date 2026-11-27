@@ -19,7 +19,7 @@ func TestSkillsPointAtWhatTheFrameworkHas(t *testing.T) {
 		titles[section.Title] = true
 	}
 	command := regexp.MustCompile("`bailu ([a-z_]+)(?: ([a-z_]+))?")
-	commands := []string{"calc", "handbook", "tariff", "table", "docs", "compute"}
+	commands := []string{"calc", "handbook", "tariff", "table", "docs", "compute", "check", "curve", "ledger", "review", "risk", "extract"}
 	for _, group := range []string{"power-trading", "office", "design"} {
 		skills, err := filepath.Glob(filepath.Join("..", "..", "skills", group, "*", "SKILL.md"))
 		if err != nil || len(skills) == 0 {

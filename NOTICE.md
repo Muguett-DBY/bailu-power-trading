@@ -23,13 +23,19 @@ Copyright 2026 GreenFlex contributors
 ## 只作参考、未收入内容 / Referenced only
 
 - **[energy-skills](https://github.com/Weisg1999/energy-skills)**（Weisg1999，CC BY-NC 4.0）：它的主题划分和流程组织作为线索，启发了零售合同、基本电费和分时电价几个技能的选题。它的文字、脚本和数据都没有收入本框架；技能内容是依据官方文件重新核实后撰写的。
-- **[electric](https://github.com/mechanic-Q/electric)**：评估过，没有采用其中的内容。
-- **[电力市场政策文件整合平台 ecnote](https://ecnote.alioc17.cn)**：服务端禁止自动访问，本框架不抓取它；各省政策文件由用户自行从官方渠道下载后放进项目。
+- **[electric](https://github.com/mechanic-Q/electric)**：它的许可不允许修改和再分发，评估后没有采用其中的内容。
+- **[电力市场政策文件整合平台 ecnote](https://ecnote.alioc17.cn)**：服务端禁止自动访问，本框架不抓取它。整理省份知识时，一份由第三方导出的该站快照只用来查找「有哪些文件、官方地址在哪里」；没有复制、引用或再分发它的任何文字，每个主题的引文都重新从官方地址取回并逐字核对。
 
 ## 知识库与数据的出处 / Sources of the knowledge and the data
 
-`knowledge/handbook/` 的内容出自国家发展改革委、国家能源局及其派出机构、各省发展改革委与电力交易中心等公开发布的文件，每个主题的「依据」一行写明文件与条款。`knowledge/data/tariffs.txt` 转录自国家发展改革委公开发布的附件（发改价格〔2026〕1077 号附件 1、发改价格〔2023〕1501 号附件）。这些文件本身未随本框架分发。
+`knowledge/handbook/` 的内容出自国家发展改革委、国家能源局及其派出机构、各省发展改革委与能源局、电力交易中心等公开发布的文件，每个主题的「依据」一行写明文件与条款。`knowledge/data/tariffs.txt` 转录自国家发展改革委公开发布的附件（发改价格〔2026〕1077 号附件 1、发改价格〔2023〕1501 号附件）。
+
+`knowledge/documents/` 收着手册所依据的官方文件全文：国家机关和监管机构公开发布的规则、通知和新闻稿，由 `scripts/build_documents.py` 从各主题引用的官方地址取回的页面和附件生成，每份文件开头写明来源地址和取回日期，`catalogue.csv` 是目录。这些文件不是本框架的创作，权利归发布机关；引用时以官方地址上的原文为准。
 
 ## bailu 工具依赖的 Go 模块 / Go modules of the bailu tool
 
-列在 `tools/bailu/go.mod` 中，按各自仓库的许可证使用，未随本框架分发其源码。
+列在 `tools/bailu/go.mod` 中，按各自仓库的许可证使用，未随本框架分发其源码。预编译的 `bailu` 随发布附带 `THIRD-PARTY-NOTICES.txt`，收着这些模块的许可证和声明文件。
+
+## 分析层依赖的 Python 库 / Python libraries of the analysis layer
+
+`analysis/` 用到 pandas 和 numpy（都是 BSD-3-Clause），由 uv 装在项目的 `analysis/.venv` 里，不随本框架分发。

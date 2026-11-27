@@ -20,3 +20,7 @@ __pycache__/
 
 # What scripts/publish.py builds
 /.release/
+
+# The optional analysis layer keeps its environment inside the project.
+analysis/.venv/
+__pycache__/

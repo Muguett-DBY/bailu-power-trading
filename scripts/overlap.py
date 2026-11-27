@@ -1,7 +1,7 @@
 """List the topics of a staged research file that overlap the handbook.
 
 Usage, from the project root:
-    uv run --frozen python scripts/overlap.py <staged file name>
+    python scripts/overlap.py <staged file name>
 
 For each topic of the staged file, the handbook topic closest by body
 wording, title and keywords is printed when the two are close enough to read

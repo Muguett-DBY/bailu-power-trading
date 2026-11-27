@@ -1,0 +1,9 @@
+[project]
+name = "bailu-analysis"
+version = "0.2.0"
+description = "Bailu 电力交易框架的可选分析层：电价、负荷、出力的基线预测与回测"
+requires-python = ">=3.10"
+dependencies = [
+    "pandas>=2.2",
+    "numpy>=1.26",
+]

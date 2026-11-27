@@ -20,7 +20,7 @@ import (
 // handbook, every one of those sentences is looked up in a document its line
 // cites, and in the provision it names.
 //
-//	uv run --frozen python scripts/fetch_cited_sources.py
+//	python scripts/fetch_cited_sources.py
 //	BAILU_VERIFY_STAGING=1 go test -run TestStagedKnowledge -v .
 var (
 	stagedQuote = regexp.MustCompile(`- 原文：「(.*)」（(.*)）\s*$`)
