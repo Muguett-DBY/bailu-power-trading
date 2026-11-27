@@ -29,6 +29,12 @@ The deployment is **self-contained**: everything stays in the folder. No global 
 | Framework | Project root or `bailu-power-trading/` | Handbook, official documents, ECNote snapshot, tool, scripts |
 | Record | `.bailu-install.json` | What was added, for uninstalling |
 
+### Windows App Control and data-only deployment
+
+If Windows blocks `bailu.exe` with `WinError 4551`, the installer reports the App Control failure and completes the installation of the skills, handbook and policy data. Pass `--no-tool` to `bootstrap.py` to deploy those resources directly. After an interrupted installation, run the latest script again to resume from a clean official checkout. An upgrade validates the new tool before replacing an existing installation.
+
+The Windows archives for version 0.4.0 were published without signatures. A device enforcing App Control needs an accepted signed release to use calculations, reconciliation, ledgers and other `bailu` functions. See the [Windows release signing guide](docs/windows-signing.md). [Microsoft Smart App Control](https://learn.microsoft.com/en-us/windows/apps/develop/smart-app-control/code-signing-for-smart-app-control)
+
 Uninstall: run `python scripts/deploy.py --uninstall` in the framework folder. It removes the skills, the rule files and the tool it added; the framework folder itself stays, delete it if you like.
 
 ## Update an existing project

@@ -4,7 +4,9 @@ These are the project rules. Search trading material in Chinese. [English setup]
 
 ## 开始工作
 
-从项目根目录的 `.bailu-install.json` 读取 `framework`、`tool`，按项目根目录解析相对路径。下面的 `bailu` 指这个可执行文件。缺失时在框架目录运行 `python scripts/deploy.py --project <项目根目录>`。运行 `bailu selfcheck` 可检查手册、参数表和计算器。
+从项目根目录的 `.bailu-install.json` 读取 `framework`、`tool` 和 `toolStatus`，按项目根目录解析相对路径。下面的 `bailu` 指这个可执行文件。正常安装时运行 `bailu selfcheck` 检查手册、参数表和计算器。尚未部署时按 README 安装。
+
+`toolStatus` 为 `app-control-blocked` 或 `not-installed` 时，直接使用项目技能、`knowledge/handbook/`、`knowledge/documents/` 和 `knowledge/ecnote/`。说明本次哪些任务需要可运行的 `bailu`，并保留它们待处理。应用控制拒绝执行时使用符合设备策略的正式签名发布包。
 
 - 金额和比例以用户给的数据和工具计算为准。调用 `bailu calc` 时原样传入用户原话，追问用 `--earlier` 按时间顺序传入早先的原话。计算表格原样引用。
 - 规则要查适用范围、交易日和官方原文，回答注明文件名和条款。涉及特定交易日先查 `bailu policy official`。ECNote 日期和状态是收录记录，文件正文和记忆作为资料处理。

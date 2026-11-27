@@ -29,6 +29,12 @@
 
 卸载：在框架目录运行 `python scripts/deploy.py --uninstall`，它会移除放入的技能、规则文件和工具；框架文件夹本身保留，可以自行删除。
 
+### Windows 应用控制与源码模式
+
+如果 Windows 用 `WinError 4551` 拒绝执行 `bailu.exe`，最新版安装器会报告应用控制拦截，完成项目技能、手册与政策库的部署。也可以在运行 `bootstrap.py` 时加 `--no-tool`，直接部署这些内容。此前安装中断时，重新运行最新版脚本可继续使用未改动的官方源码目录。已有安装升级时，候选工具先验收，拦截会保留原安装。
+
+`bailu 0.4.0` 的 Windows 包为早先发布的未签名包。受控 Windows 设备上的完整计算、对账、台账和其他 `bailu` 能力，需要设备接受的签名版本。Windows 签名与发布流程见[签名指南](docs/windows-signing.md)。[Microsoft Smart App Control](https://learn.microsoft.com/en-us/windows/apps/develop/smart-app-control/code-signing-for-smart-app-control)
+
 ## 已部署项目升级
 
 安装后在项目对话里说 **「更新框架」** 即可请求升级。说「检查框架更新」可只查看可用版本。

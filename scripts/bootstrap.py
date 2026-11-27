@@ -22,6 +22,8 @@ CLONE_TIMEOUT = 120
 MIRROR_PROBE_TIMEOUT = 20
 MANIFEST = ".bailu-install.json"
 VERIFIED_TOOL_ORIGIN = "BAILU_UPDATE_TOOL_ORIGIN"
+APP_CONTROL_BLOCKED = "app-control-blocked"
+TOOL_NOT_INSTALLED = "not-installed"
 GIT_NETWORK = ["git", "-c", "credential.helper=", "-c", "core.askPass=", "-c", "http.lowSpeedLimit=1024",
                "-c", "http.lowSpeedTime=15"]
 
@@ -98,21 +100,50 @@ def project_path(project: Path, relative: str) -> Path:
     return resolved
 
 
-def deploy_and_check(project: Path, source: Path, mirror: str, directories: list[str], *, no_skills=False,
+def verify_source_data(source: Path) -> None:
+    knowledge = source / "knowledge"
+    archive = knowledge / "ecnote"
+    try:
+        if not any(path.is_file() for path in (knowledge / "handbook").glob("*.md")):
+            raise ValueError("没有手册文件")
+        policy = json.loads((archive / "index.json").read_text(encoding="utf-8"))
+        if not isinstance(policy, list) or not policy:
+            raise ValueError("没有政策索引记录")
+        documents = {path.name for path in (archive / "docs").glob("*.md") if path.is_file()}
+        if any(row["id"] + ".md" not in documents for row in policy):
+            raise ValueError("政策索引与原文文件不一致")
+    except (OSError, ValueError, KeyError, TypeError) as error:
+        raise SystemExit(f"本地知识库文件检查失败：{error}") from None
+
+
+def deploy_and_check(project: Path, source: Path, mirror: str, directories: list[str], *, no_skills=False, no_tool=False,
                      tool_origin="") -> dict:
     command = [sys.executable, str(source / "scripts" / "deploy.py"), "--project", str(project)]
     for directory in directories:
         command.extend(("--skills-dir", directory))
     if no_skills:
         command.append("--no-skills")
+    if no_tool:
+        verify_source_data(source)
+        command.append("--no-tool")
     env = {**os.environ, "BAILU_RELEASE_MIRROR": mirror, VERIFIED_TOOL_ORIGIN: tool_origin}
     result = subprocess.run(command, cwd=source, env=env)
     if result.returncode:
         raise SystemExit(result.returncode)
     record = install_record(project)
+    if no_tool or record.get("toolStatus") in (APP_CONTROL_BLOCKED, TOOL_NOT_INSTALLED):
+        if not no_tool:
+            verify_source_data(source)
+        print("本地手册、政策索引和政策原文文件已检查。bailu 命令自检已跳过。")
+        return record
     tool = project_path(project, record["tool"])
-    result = subprocess.run([str(tool), "policy", "search", "--limit", "1", "--home", str(source)], cwd=project,
-                            capture_output=True, text=True, encoding="utf-8", errors="replace")
+    try:
+        result = subprocess.run([str(tool), "policy", "search", "--limit", "1", "--home", str(source)], cwd=project,
+                                capture_output=True, text=True, encoding="utf-8", errors="replace")
+    except OSError as error:
+        if getattr(error, "winerror", None) == 4551:
+            raise SystemExit("Windows 应用控制阻止了 bailu 的政策库命令自检（WinError 4551）。") from None
+        raise
     if result.returncode or "没有找到匹配文档" in result.stdout:
         raise SystemExit(f"政策库自检失败。{result.stderr.strip() or result.stdout.strip()}")
     print(f"政策库已通过自检。工具 {tool}（{record['toolOrigin']}）")
@@ -206,6 +237,35 @@ def skill_directories(record: dict, requested: list[str]) -> list[str]:
     return list(dict.fromkeys([*recorded, *requested]))
 
 
+def resume_checkout(project: Path, source: Path, preferred: str) -> str:
+    """Refresh an interrupted bootstrap's clean official main checkout."""
+    origin = origin_mirror(source)
+    if not origin or (project / MANIFEST).is_file():
+        return preferred
+    root = local_git(source, "rev-parse", "--show-toplevel")
+    if root.returncode or Path(root.stdout.strip()).resolve() != source:
+        return preferred
+    if local_git(source, "symbolic-ref", "--quiet", "--short", "HEAD").stdout.strip() != "main":
+        return preferred
+    status = local_git(source, "status", "--porcelain", "--untracked-files=no")
+    if status.returncode or status.stdout:
+        raise SystemExit("上次部署留下的框架源码含未提交的修改。请保留修改后重试，或用 --no-tool 部署当前源码的技能和知识库。")
+    current = local_git(source, "rev-parse", "HEAD").stdout.strip()
+    with tempfile.TemporaryDirectory(dir=project, prefix=".bailu-resume-") as stage:
+        candidate = update_candidate(source, current, preferred, Path(stage) / "git.log")
+    if candidate is None:
+        return preferred
+    tip, mirror = candidate
+    required = {**dict.fromkeys(REQUIRED, "blob"), "knowledge/handbook": "tree"}
+    if any(local_git(source, "cat-file", "-t", f"{tip}:{path}").stdout.strip() != kind for path, kind in required.items()):
+        raise SystemExit("新版框架缺少部署所需的文件。已保留上次的源码。")
+    merged = local_git(source, "merge", "--ff-only", "--no-overwrite-ignore", tip)
+    if merged.returncode:
+        raise SystemExit(merged.stderr.strip() or merged.stdout.strip())
+    print(f"已续接上次未完成的部署。源码已更新至 {tip[:12]}（{mirror}）。")
+    return mirror
+
+
 def update(project: Path, preferred: str | None, directories: list[str], check_only: bool) -> None:
     if not (project / MANIFEST).is_file():
         raise SystemExit("当前目录没有部署记录。请先运行 bootstrap.py 安装框架。")
@@ -246,6 +306,10 @@ def update(project: Path, preferred: str | None, directories: list[str], check_o
                 preview_binary.parent.mkdir(parents=True)
                 shutil.copy2(cached, preview_binary)
             checked = deploy_and_check(preview, preview, mirror, [], no_skills=True)
+            if not checked.get("tool"):
+                if checked.get("toolStatus") == APP_CONTROL_BLOCKED:
+                    raise SystemExit("新版 bailu 未通过 Windows 应用控制验收（WinError 4551），已保留原部署。")
+                raise SystemExit("新版 bailu 未就绪，已保留原部署。")
             verified_tool = project_path(preview, checked["tool"])
             origin = checked["toolOrigin"]
             if origin == "之前放入的":
@@ -340,6 +404,7 @@ def main() -> None:
     mode = parser.add_mutually_exclusive_group()
     mode.add_argument("--check-update", action="store_true", help="检查是否能从公开镜像快进升级")
     mode.add_argument("--update", action="store_true", help="先验收新版本，再升级当前部署")
+    mode.add_argument("--no-tool", action="store_true", help="部署技能和知识库，跳过安装与运行 bailu")
     args = parser.parse_args()
     project = args.project.resolve()
     home = Path.home().resolve()
@@ -348,9 +413,12 @@ def main() -> None:
     if args.check_update or args.update:
         update(project, args.mirror, args.skills_dir, args.check_update)
         return
+    existed = complete_checkout(project) or complete_checkout(project / "bailu-power-trading")
     source, mirror = checkout(project, args.mirror or "github")
+    if existed and not args.no_tool:
+        mirror = resume_checkout(project, source, mirror)
     print(f"源码目录 {source}（优先从 {mirror} 下载工具）")
-    deploy_and_check(project, source, mirror, args.skills_dir)
+    deploy_and_check(project, source, mirror, args.skills_dir, no_tool=args.no_tool)
 
 
 if __name__ == "__main__":

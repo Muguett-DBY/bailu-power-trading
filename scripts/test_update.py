@@ -172,6 +172,40 @@ class UpdateTest(unittest.TestCase):
         candidate.assert_not_called()
         self.assertEqual(handbook.read_bytes(), b"unsaved local edits\n")
 
+    def test_resume_refreshes_old_clean_checkout_before_first_installation(self):
+        self.git(self.checkout, "pull", "--ff-only")
+        self.manifest.unlink()
+        self.write(self.remote / "scripts/deploy.py", b"# deployment with policy diagnosis\n")
+        latest = self.commit("recover interrupted installation")
+        with contextlib.redirect_stdout(io.StringIO()):
+            mirror = bootstrap.resume_checkout(self.project, self.checkout, "gitee")
+        self.assertEqual(mirror, "gitee")
+        self.assertEqual(self.git(self.checkout, "rev-parse", "HEAD"), latest)
+        self.assertFalse(self.manifest.exists())
+        self.assertEqual((self.project / "invoice.txt").read_bytes(), b"business data")
+        self.assertEqual(self.binary.read_bytes(), b"previous binary")
+
+    def test_resume_preserves_dirty_source_and_does_not_fetch(self):
+        self.manifest.unlink()
+        guidance = self.checkout / "AGENTS.md"
+        guidance.write_bytes(b"local instructions")
+        with patch.object(bootstrap, "update_candidate") as candidate, self.assertRaisesRegex(SystemExit, "未提交"):
+            bootstrap.resume_checkout(self.project, self.checkout, "gitee")
+        candidate.assert_not_called()
+        self.assertEqual(guidance.read_bytes(), b"local instructions")
+        self.assertEqual(self.git(self.checkout, "rev-parse", "HEAD"), self.old)
+
+    def test_upgrade_keeps_running_installation_when_app_control_blocks_candidate(self):
+        with patch.object(bootstrap, "deploy_and_check", return_value={"toolStatus": bootstrap.APP_CONTROL_BLOCKED}) as check:
+            with self.assertRaisesRegex(SystemExit, "4551"):
+                self.run_update()
+        check.assert_called_once()
+        self.assertTrue(check.call_args.kwargs["no_skills"])
+        self.assertEqual(self.git(self.checkout, "rev-parse", "HEAD"), self.old)
+        self.assertEqual(self.manifest.read_bytes(), self.old_manifest)
+        self.assertEqual(self.binary.read_bytes(), b"previous binary")
+        self.assertEqual(list(self.project.glob(".bailu-update-*")), [])
+
     def test_failed_apply_restores_version_and_deployment(self):
         legacy = ".pi/extensions/bailu-ask-user.ts"
         extension = self.project / legacy

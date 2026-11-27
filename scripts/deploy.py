@@ -52,6 +52,15 @@ CONVENTIONS = {".claude": ".claude/skills", ".cursor": ".cursor/skills", ".codeb
                ".gemini": ".gemini/skills", ".windsurf": ".windsurf/skills", ".zcode": ".zcode/skills"}
 RULES = (("AGENTS.md", None), ("CLAUDE.md", "@AGENTS.md\n"), ("GEMINI.md", "@AGENTS.md\n"))
 LEGACY_QUESTION_EXTENSION = ".pi/extensions/bailu-ask-user.ts"
+APP_CONTROL_BLOCKED = "app-control-blocked"
+TOOL_NOT_INSTALLED = "not-installed"
+TOOL_AVAILABLE = "available"
+
+
+class ApplicationControlBlocked(RuntimeError):
+    def __init__(self, message: str):
+        super().__init__(message)
+        self.existing_paths: set[Path] = set()
 
 
 def system() -> str:
@@ -78,8 +87,17 @@ def listed_in(sums: str, name: str) -> str:
     return ""
 
 
+def run_tool(path: Path, *args: str, **options) -> subprocess.CompletedProcess:
+    try:
+        return subprocess.run([str(path), *args], **options)
+    except OSError as error:
+        if getattr(error, "winerror", None) == 4551:
+            raise ApplicationControlBlocked("Windows 应用控制策略拒绝运行 bailu（WinError 4551）。") from error
+        raise
+
+
 def tool_version(path: Path) -> str:
-    result = subprocess.run([str(path), "version"], capture_output=True, text=True, encoding="utf-8", errors="replace")
+    result = run_tool(path, "version", capture_output=True, text=True, encoding="utf-8", errors="replace")
     return result.stdout.strip() if result.returncode == 0 else ""
 
 
@@ -123,27 +141,43 @@ def download_tool(name: str, exe: str, candidate: Path) -> str:
 def install_tool(force: bool) -> tuple:
     """Give the project a bailu it can run, and say where it came from: one
     built in place, one put there by an earlier run, one downloaded from a
-    release, or one built with Go. A downloaded archive is used only when its
-    digest is the one the release's SHA256SUMS names, and when the tool says
-    the version the framework is at."""
+    release, or one built with Go. A downloaded archive is tested against the
+    release checksum, framework version and local self-check."""
     exe = "bailu.exe" if sys.platform == "win32" else "bailu"
     built = FRAMEWORK / "tools" / "bailu" / exe
     verified_origin = os.environ.get("BAILU_UPDATE_TOOL_ORIGIN")
-    if not verified_origin and not force and built.is_file() and matches_version(built):
-        return built, "本机构建"
     placed = inside(FRAMEWORK, FRAMEWORK / ".bailu" / "bin" / exe)
     if verified_origin:
         if not matches_version(placed):
             raise SystemExit("已验收的升级工具缺失或版本不符。")
+        check_tool(placed)
         return placed, verified_origin
-    if placed.is_file() and not force and matches_version(placed):
-        return placed, "之前放入的"
+    blocked = {}
+    if not force:
+        for path, origin in ((built, "本机构建"), (placed, "之前放入的")):
+            if not path.is_file():
+                continue
+            try:
+                if matches_version(path):
+                    check_tool(path)
+                    return path, origin
+            except ApplicationControlBlocked as error:
+                blocked[path.resolve()] = error
+                # The current public release may be signed even if a cached executable is not.
     placed.parent.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(dir=placed.parent) as stage:
         candidate = Path(stage) / exe
         target = system()
-        origin = download_tool(f"bailu-{target}.zip", exe, candidate) if target else ""
+        try:
+            origin = download_tool(f"bailu-{target}.zip", exe, candidate) if target else ""
+        except ApplicationControlBlocked as error:
+            error.existing_paths.update(blocked)
+            raise
         if not origin:
+            if blocked:
+                error = next(iter(blocked.values()))
+                error.existing_paths.update(blocked)
+                raise error
             print("没有取到预编译的 bailu；改为用 Go 编译。")
             go = shutil.which("go")
             if not go:
@@ -155,8 +189,27 @@ def install_tool(force: bool) -> tuple:
             if not matches_version(candidate):
                 raise SystemExit(f"编译得到的 bailu 版本与 {VERSION} 不符。")
             origin = "Go 编译"
+        previous = Path(stage) / "previous"
+        if placed.is_file():
+            shutil.copy2(placed, previous)
         candidate.replace(placed)
+        try:
+            check_tool(placed)
+        except (ApplicationControlBlocked, OSError, SystemExit, KeyboardInterrupt) as error:
+            if previous.is_file():
+                previous.replace(placed)
+            else:
+                placed.unlink(missing_ok=True)
+            if isinstance(error, ApplicationControlBlocked):
+                error.existing_paths.update(blocked)
+            raise
     return placed, origin
+
+
+def check_tool(path: Path) -> None:
+    print("自检：")
+    if run_tool(path, "selfcheck", "--home", str(FRAMEWORK)).returncode != 0:
+        raise SystemExit("自检没有通过，技能与部署记录尚未写入。")
 
 
 def inside(project: Path, target: Path) -> Path:
@@ -208,7 +261,7 @@ def put_aside(project: Path, target: Path) -> Path:
     return backup
 
 
-def rules(project: Path, framework: str, tool: str, hashes: dict | None = None) -> list:
+def rules(project: Path, framework: str, tool: str, hashes: dict | None = None, *, tool_status=TOOL_NOT_INSTALLED) -> list:
     """Write what tells the agent of the framework where its rules and its tool
     are; a file of the project's own is left as it is."""
     own = framework == "."
@@ -216,8 +269,10 @@ def rules(project: Path, framework: str, tool: str, hashes: dict | None = None) 
     pointer = f"- 先读 `{where}`，按其中的规则和任务入口工作。\n"
     if tool:
         pointer += f"- bailu 工具：`{tool}`（相对项目根目录）；规则里的 `bailu` 都指它。\n"
+    elif tool_status == APP_CONTROL_BLOCKED:
+        pointer += "- Windows 应用控制挡住了 bailu 工具。使用本项目的技能和知识库原文；依赖命令的功能等受信任签名版本就绪后再用。\n"
     else:
-        pointer += "- bailu 工具没有随部署安装；需要时按上面的规则里的说明装上。\n"
+        pointer += "- bailu 工具没有随部署安装。当前可使用技能和知识库原文。\n"
     written = []
     for name, head in RULES:
         if name == "GEMINI.md" and not (project / ".gemini").is_dir():
@@ -332,21 +387,37 @@ def deploy(project: Path, skills: list, with_skills: bool, with_tool: bool, forc
             written += [framework + "/.bailu", MANIFEST]
             print(f"注意：{project} 里已经有 {len(others)} 项别的东西，不会改动它们。部署只写入：" + "、".join(written))
     manifest = {"framework": framework, "skills": installed_skills(earlier), "skillHashes": earlier.get("skillHashes", {}),
-                "backups": earlier.get("backups", {})}
+                "backups": earlier.get("backups", {}), "toolStatus": TOOL_NOT_INSTALLED}
+    previous_tool = earlier.get("tool")
+    previous_path = inside(project, project / previous_tool) if previous_tool else None
+    had_tool = previous_path is not None and previous_path.is_file()
+    retained = earlier.get("retainedTool")
+    if retained and inside(project, project / retained).is_file():
+        manifest["retainedTool"] = retained
     if with_tool:
-        tool, origin = install_tool(force)
-        print("自检：")
-        if subprocess.run([str(tool), "selfcheck", "--home", str(FRAMEWORK)]).returncode != 0:
-            raise SystemExit("自检没有通过，技能与部署记录尚未写入。")
-        manifest["tool"] = tool.relative_to(project).as_posix()
-        manifest["toolOrigin"] = origin
-    elif earlier.get("tool") and inside(project, project / earlier["tool"]).is_file():
-        manifest["tool"] = earlier["tool"]
+        try:
+            tool, origin = install_tool(force)
+        except ApplicationControlBlocked as error:
+            if had_tool and previous_path.resolve() not in error.existing_paths:
+                raise SystemExit(f"{error} 保留现有部署和工具。") from None
+            if had_tool:
+                manifest["retainedTool"] = previous_tool
+            print(f"{error} 本次仅部署技能和知识库。")
+            manifest["toolStatus"] = APP_CONTROL_BLOCKED
+        else:
+            manifest.update(tool=tool.relative_to(project).as_posix(), toolOrigin=origin, toolStatus=TOOL_AVAILABLE)
+            if manifest.get("retainedTool") == manifest["tool"]:
+                manifest.pop("retainedTool")
+    elif had_tool:
+        manifest["tool"] = previous_tool
         manifest["toolOrigin"] = earlier.get("toolOrigin", "之前放入的")
+        manifest["toolStatus"] = earlier.get("toolStatus", TOOL_AVAILABLE)
+    elif earlier.get("toolStatus") == APP_CONTROL_BLOCKED:
+        manifest["toolStatus"] = APP_CONTROL_BLOCKED
     if with_skills:
         copy_skills(project, skills, manifest, force)
     previous_hashes = earlier.get("hashes", {})
-    written = rules(project, framework, manifest.get("tool", ""), previous_hashes)
+    written = rules(project, framework, manifest.get("tool", ""), previous_hashes, tool_status=manifest["toolStatus"])
     # A rule file an earlier run wrote and this one left in place is still the deployment's.
     manifest["files"] = written + [name for name in earlier.get("files", [])
                                    if name != LEGACY_QUESTION_EXTENSION and name not in written and (project / name).is_file()]
@@ -376,7 +447,12 @@ def deploy(project: Path, skills: list, with_skills: bool, with_tool: bool, forc
         print(f"  技能：{count} 个 → " + "、".join(manifest["skills"]))
     else:
         print("  技能：没有复制（--no-skills）" if not with_skills else "  技能：项目里都已有了，这次没有新复制")
-    print(f"  工具：{manifest.get('tool', '未安装（--no-tool）')}" + (f"（{manifest['toolOrigin']}）" if "tool" in manifest else ""))
+    if "tool" in manifest:
+        print(f"  工具：{manifest['tool']}（{manifest['toolOrigin']}）")
+    elif manifest["toolStatus"] == APP_CONTROL_BLOCKED:
+        print("  工具：未安装，Windows 应用控制阻止运行（WinError 4551）。")
+    else:
+        print("  工具：未安装（--no-tool）。")
     for name in manifest["files"]:
         print(f"  规则：{name}")
     print(f"卸载：\"{sys.executable}\" scripts/deploy.py --uninstall --project \"{project}\"（框架文件夹本身保留）")
@@ -404,7 +480,7 @@ def uninstall(project: Path) -> None:
         raise SystemExit("部署记录包含未知的规则文件。")
     rules = [inside(project, project / name) for name in rule_names if name != LEGACY_QUESTION_EXTENSION]
     legacy = owned_legacy_question_extension(project, manifest)
-    installed_tool = inside(project, project / manifest["tool"]) if manifest.get("tool") else None
+    installed_tools = {inside(project, project / manifest[key]) for key in ("tool", "retainedTool") if manifest.get(key)}
     tool_dir = FRAMEWORK / ".bailu" / "bin"
     skill_hashes = manifest.get("skillHashes", {})
     changed = []
@@ -421,8 +497,9 @@ def uninstall(project: Path) -> None:
             changed.append(name)
             continue
         target.unlink(missing_ok=True)
-    if installed_tool and installed_tool.parent == tool_dir and installed_tool.name in ("bailu", "bailu.exe"):
-        installed_tool.unlink(missing_ok=True)
+    for tool in installed_tools:
+        if tool.parent == tool_dir and tool.name in ("bailu", "bailu.exe"):
+            tool.unlink(missing_ok=True)
     if legacy is not None:
         legacy.unlink()
     path.unlink()

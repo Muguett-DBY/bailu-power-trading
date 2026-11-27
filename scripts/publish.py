@@ -1,15 +1,19 @@
 """Publish a release of the framework: tests, native archives, GitHub, jsDelivr and Gitee.
 
-    python scripts/publish.py v0.2.1
+    python scripts/publish.py v0.4.1 --signed-windows-dir PATH
 
 Needs git, Go, uv, the GitHub command line tool (signed in) and, for the mirror,
 the variable GITEE_TOKEN with a personal access token of the Gitee account
 (scopes user_info and projects). Tool archives are published to both releases
-and to a version-specific GitHub artifact tag for CDN downloads. Beside the
-archives go SHA256SUMS, which scripts/deploy.py checks an archive against
+and to a version-specific GitHub artifact tag for CDN downloads. The Windows
+bundle contains the signed windows/amd64/bailu.exe and windows/arm64/bailu.exe
+from the current source commit. Publication verifies both with PowerShell 7
+on Windows and archives their exact bytes. Reuse the bundle on retries.
+Beside the archives go SHA256SUMS, which scripts/deploy.py checks against
 before it runs it, and the notices of the Go modules built into the tool.
 """
 
+import argparse
 from concurrent.futures import ThreadPoolExecutor
 import hashlib
 import json
@@ -29,6 +33,7 @@ OUT = ROOT / ".release"
 TARGETS = ["windows/amd64", "windows/arm64", "linux/amd64", "linux/arm64", "darwin/amd64", "darwin/arm64"]
 GITHUB = "https://github.com/Muguett-DBY/bailu-power-trading"
 GITHUB_REPO = "Muguett-DBY/bailu-power-trading"
+TOOL_MODULE = f"github.com/{GITHUB_REPO}/tools/bailu"
 GITEE = "https://gitee.com/Muguett/bailu-power-trading"
 GITEE_API = "https://gitee.com/api/v5/repos/Muguett/bailu-power-trading"
 
@@ -70,23 +75,62 @@ def module_notices() -> Path:
     return path
 
 
-def build(version: str) -> list:
+def verify_windows_bundle(directory: Path, commit: str, publisher: str = "") -> dict[str, bytes]:
+    verified = {}
+    OUT.mkdir(exist_ok=True)
+    with tempfile.TemporaryDirectory(dir=OUT) as stage:
+        for target in TARGETS:
+            system, arch = target.split("/")
+            if system != "windows":
+                continue
+            source = directory / system / arch / "bailu.exe"
+            if not source.is_file():
+                raise SystemExit(f"missing signed Windows release file: {source}")
+            binary = source.read_bytes()
+            snapshot = Path(stage) / f"bailu-{arch}.exe"
+            snapshot.write_bytes(binary)
+            command = ["pwsh", "-NoLogo", "-NoProfile", "-NonInteractive", "-File",
+                       str(ROOT / "scripts" / "verify_windows_signature.ps1"), "-Path", str(snapshot)]
+            if publisher:
+                command.extend(("-Publisher", publisher))
+            run(*command)
+
+            try:
+                build_info = json.loads(run("go", "version", "-m", "-json", str(snapshot), cwd=TOOL))
+                settings = {item["Key"]: item["Value"] for item in build_info["Settings"]}
+            except (ValueError, KeyError, TypeError) as exc:
+                raise SystemExit(f"{source} has no usable Go build information") from exc
+            expected = {"GOOS": system, "GOARCH": arch, "vcs.revision": commit, "vcs.modified": "false"}
+            if build_info.get("Path") != TOOL_MODULE or any(settings.get(key) != value for key, value in expected.items()):
+                raise SystemExit(f"{source} must match {TOOL_MODULE}, clean source commit {commit} and target {target}")
+            verified[target] = binary
+    return verified
+
+
+def build(version: str, signed_windows: dict[str, bytes] | None = None) -> list:
+    signed_windows = signed_windows or {}
+    if any(target.startswith("windows/") and not signed_windows.get(target) for target in TARGETS):
+        raise SystemExit("Windows archives require verified signed binaries before packaging")
     OUT.mkdir(exist_ok=True)
     archives = []
     for target in TARGETS:
         system, arch = target.split("/")
         name = f"bailu-{system}-{arch}"
         exe = "bailu.exe" if system == "windows" else "bailu"
-        folder = OUT / name
-        folder.mkdir(exist_ok=True)
-        run("go", "build", "-trimpath", "-ldflags=-s -w", "-o", str(folder / exe), ".", cwd=TOOL,
-            env={"GOOS": system, "GOARCH": arch, "CGO_ENABLED": "0", "GOFLAGS": "-p=4"})
+        if system == "windows":
+            binary = signed_windows[target]
+        else:
+            folder = OUT / name
+            folder.mkdir(exist_ok=True)
+            run("go", "build", "-trimpath", "-ldflags=-s -w", "-o", str(folder / exe), ".", cwd=TOOL,
+                env={"GOOS": system, "GOARCH": arch, "CGO_ENABLED": "0", "GOFLAGS": "-p=4"})
+            binary = (folder / exe).read_bytes()
         archive = OUT / (name + ".zip")
         with zipfile.ZipFile(archive, "w") as zipped:
             member = zipfile.ZipInfo(exe)
             member.create_system = 3
             member.external_attr = 0o100755 << 16
-            zipped.writestr(member, (folder / exe).read_bytes(), compress_type=zipfile.ZIP_DEFLATED)
+            zipped.writestr(member, binary, compress_type=zipfile.ZIP_DEFLATED)
         archives.append(archive)
         print("built", archive.name)
     (OUT / "SHA256SUMS").write_text(
@@ -108,8 +152,10 @@ def assets() -> list:
     return [*archives, OUT / "SHA256SUMS", OUT / "THIRD-PARTY-NOTICES.txt"]
 
 
-def ensure_tag(version: str) -> str:
+def ensure_tag(version: str, expected_commit: str | None = None) -> str:
     commit = run("git", "rev-parse", "HEAD")
+    if expected_commit is not None and commit != expected_commit:
+        raise SystemExit("source commit changed while preparing this release")
     tagged = run("git", "rev-parse", "--verify", "--quiet", f"refs/tags/{version}^{{commit}}", check=False)
     if tagged and tagged != commit:
         raise SystemExit(f"{version} already names a different commit: {tagged}")
@@ -217,7 +263,13 @@ def gitee(version: str, commit: str, token: str) -> None:
 
 
 def main() -> None:
-    version = sys.argv[1] if len(sys.argv) > 1 else "v" + version_in_tool()
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("version", nargs="?", help="release version vX.Y.Z, defaults to the version in the source")
+    parser.add_argument("--signed-windows-dir", required=True, type=Path,
+                        help="directory containing the signed windows/amd64 and windows/arm64 binaries")
+    parser.add_argument("--windows-publisher", default="", help="expected signing certificate subject, when configured")
+    args = parser.parse_args()
+    version = args.version or "v" + version_in_tool()
     if not re.fullmatch(r"v\d+\.\d+\.\d+", version):
         raise SystemExit("name the release as vX.Y.Z")
     token = os.environ.get("GITEE_TOKEN")
@@ -228,13 +280,15 @@ def main() -> None:
         raise SystemExit("the version of the tool, of deploy.py and the release differ")
     if run("git", "status", "--porcelain", "--untracked-files=normal"):
         raise SystemExit("commit the changes first")
+    commit = run("git", "rev-parse", "HEAD")
+    signed_windows = verify_windows_bundle(args.signed_windows_dir.resolve(), commit, args.windows_publisher)
     run("go", "test", "./...", cwd=TOOL, env={"GOFLAGS": "-p=4"})
     run(sys.executable, "-m", "unittest", "discover", "-s", "scripts", "-p", "test_*.py")
     for project in ("office", "analysis"):
         run("uv", "run", "--project", project, "--locked", "--cache-dir", ".cache/uv", "python",
             "-m", "unittest", "discover", "-s", project)
-    archives = build(version[1:])
-    commit = ensure_tag(version)
+    archives = build(version[1:], signed_windows)
+    ensure_tag(version, expected_commit=commit)
     run("git", "push", GITHUB + ".git", f"refs/tags/{version}")
     github(version)
     publish_artifact_tag(version)

@@ -1,8 +1,11 @@
 """Verify local archive creation and release resumption without contacting either host."""
 
+import hashlib
 import json
+import sys
 import tempfile
 import unittest
+import zipfile
 from pathlib import Path
 from unittest.mock import patch
 
@@ -19,13 +22,79 @@ class PublishTest(unittest.TestCase):
                 target = Path(command[command.index("-o") + 1])
                 target.write_bytes(b"compiled binary")
 
-            with patch.object(publish, "OUT", output), patch.object(publish, "TARGETS", ["windows/arm64"]), patch.object(
+            with patch.object(publish, "OUT", output), patch.object(publish, "TARGETS", ["linux/arm64"]), patch.object(
                 publish, "run", side_effect=run
             ), patch.object(publish, "module_notices"):
                 first = publish.build("0.0.1")[0].read_bytes()
                 second = publish.build("0.0.1")[0].read_bytes()
                 self.assertEqual(first, second)
                 self.assertNotIn("old.zip", [path.name for path in publish.assets()])
+
+    def test_signed_windows_bundle_is_verified_before_archiving_exact_bytes(self):
+        commit = "0123456789abcdef"
+        for changed in (False, True):
+            with self.subTest(modified=changed), tempfile.TemporaryDirectory() as temporary:
+                output = Path(temporary)
+                bundle = output / "signed"
+                targets = ["windows/amd64", "windows/arm64"]
+                contents = {target: f"signed {target}".encode() for target in targets}
+                for target, binary in contents.items():
+                    path = bundle / target / "bailu.exe"
+                    path.parent.mkdir(parents=True)
+                    path.write_bytes(binary)
+
+                def run(*args, **_):
+                    if args[0] == "pwsh":
+                        self.assertIn("verify_windows_signature.ps1", args[5])
+                        self.assertEqual(args[-2:], ("-Publisher", "CN=Bailu publisher"))
+                        return ""
+                    self.assertEqual(args[:4], ("go", "version", "-m", "-json"))
+                    arch = Path(args[-1]).stem.removeprefix("bailu-")
+                    source = bundle / "windows" / arch / "bailu.exe"
+                    self.assertEqual(Path(args[-1]).read_bytes(), source.read_bytes())
+                    source.write_bytes(b"file changed after verification")
+                    properties = {"GOOS": "windows", "GOARCH": arch, "vcs.revision": commit,
+                                  "vcs.modified": str(changed).lower()}
+                    return json.dumps({"Path": publish.TOOL_MODULE, "Settings": [
+                        {"Key": key, "Value": value} for key, value in properties.items()]})
+
+                with patch.object(publish, "OUT", output), patch.object(publish, "TARGETS", targets), patch.object(
+                    publish, "run", side_effect=run
+                ) as call, patch.object(publish, "module_notices"):
+                    if changed:
+                        with self.assertRaisesRegex(SystemExit, "clean source commit"):
+                            publish.verify_windows_bundle(bundle, commit, "CN=Bailu publisher")
+                        continue
+                    signed = publish.verify_windows_bundle(bundle, commit, "CN=Bailu publisher")
+                    self.assertEqual(signed, contents)
+                    self.assertEqual([item.args[0] for item in call.call_args_list], ["pwsh", "go", "pwsh", "go"])
+                    archives = publish.build("0.0.1", signed)
+                sums = []
+                for archive, target in zip(archives, targets):
+                    with zipfile.ZipFile(archive) as zipped:
+                        self.assertEqual(zipped.read("bailu.exe"), contents[target])
+                    sums.append(f"{hashlib.sha256(archive.read_bytes()).hexdigest()}  {archive.name}")
+                self.assertEqual((output / "SHA256SUMS").read_text(encoding="utf-8").splitlines(), sums)
+
+    def test_cannot_prepare_a_release_with_only_one_windows_binary(self):
+        with tempfile.TemporaryDirectory() as temporary, patch.object(publish, "OUT", Path(temporary)), patch.object(
+            publish, "run"
+        ) as call:
+            with self.assertRaisesRegex(SystemExit, "require verified signed binaries"):
+                publish.build("0.0.1", {"windows/amd64": b"one architecture"})
+            call.assert_not_called()
+
+    def test_signature_rejection_stops_before_publication(self):
+        release = "v" + publish.version_in_tool()
+        with patch.object(sys, "argv", ["publish.py", release, "--signed-windows-dir", "signed"]), patch.dict(
+            publish.os.environ, {"GITEE_TOKEN": "test"}
+        ), patch.object(publish, "run", side_effect=["", "source"]) as run, patch.object(
+            publish, "verify_windows_bundle", side_effect=SystemExit("invalid Authenticode")
+        ), patch.object(publish, "build") as build:
+            with self.assertRaisesRegex(SystemExit, "invalid Authenticode"):
+                publish.main()
+        self.assertEqual([call.args[:2] for call in run.call_args_list], [("git", "status"), ("git", "rev-parse")])
+        build.assert_not_called()
 
     def test_existing_github_draft_uploads_missing_assets_and_is_published(self):
         paths = [Path("bailu-windows-amd64.zip"), Path("SHA256SUMS")]
