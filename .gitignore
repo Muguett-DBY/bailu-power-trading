@@ -3,6 +3,7 @@ tools/bailu/bailu
 tools/bailu/bailu.exe
 .bailu/
 .bailu-install.json
+/.bailu-memory/
 .cache/
 
 # The official documents downloaded to check the handbook's quotes

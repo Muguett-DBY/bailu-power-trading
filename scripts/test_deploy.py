@@ -129,6 +129,9 @@ class DeploymentTest(unittest.TestCase):
         tool.write_bytes(b"tool")
         local = framework / ".bailu" / "keep.md"
         local.write_text("local", encoding="utf-8")
+        memory = project / ".bailu-memory" / "preference.json"
+        memory.parent.mkdir()
+        memory.write_text('{"key":"report style","value":"decision first"}', encoding="utf-8")
         with patch.object(self.deploy, "install_tool", return_value=(tool, "test")), patch.object(self.deploy.subprocess, "run") as run:
             run.return_value.returncode = 0
             self.quietly(self.deploy.deploy, project, [], False, True, False)
@@ -137,6 +140,7 @@ class DeploymentTest(unittest.TestCase):
         self.quietly(self.deploy.uninstall, project)
         self.assertFalse(tool.exists())
         self.assertTrue(local.is_file())
+        self.assertEqual(memory.read_text(encoding="utf-8"), '{"key":"report style","value":"decision first"}')
 
     def test_stale_tool_is_replaced_only_after_a_valid_mirror_supplies_its_successor(self):
         framework = self.framework_at(self.home / "bailu-power-trading")

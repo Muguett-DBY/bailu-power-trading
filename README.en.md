@@ -24,7 +24,7 @@ The deployment is **self-contained**: everything stays in the folder. No global 
 
 | What lands in the project | Where | What it is for |
 | --- | --- | --- |
-| Skills | `.agents/skills/` (or your agent's own skills folder) | 30 skills the agent loads as needed |
+| Skills | `.agents/skills/` (or your agent's own skills folder) | 31 skills the agent loads as needed |
 | Rules | `AGENTS.md` at the project root (`CLAUDE.md` points to it for Claude Code) | Tells the agent to read the framework's rules and where `bailu` is |
 | Framework | Project root or `bailu-power-trading/` | Handbook, official documents, ECNote snapshot, tool, scripts |
 | Record | `.bailu-install.json` | What was added, for uninstalling |
@@ -40,6 +40,12 @@ Update the Bailu framework already deployed in the current project. Download the
 ```
 
 With v0.3.0 or later installed, run `python scripts/bootstrap.py --project <project root> --check-update` from the framework directory. Use `--update` to apply an available update. The updater prefers the previous mirror, checks the candidate in a temporary worktree, and applies a fast-forward. It keeps backups in `.bailu/update-backups/` in the framework directory and restores the installation if applying the deployment fails. Save local framework source changes and resolve divergent Git history before upgrading.
+
+## Project memory
+
+From v0.4.0, tell an agent that reads project instructions and can run commands “Use a conclusion-first format for settlement reports from now on” or “Correction: our summary table uses column C for purchased electricity.” Its `project-memory` skill records the durable preference or project fact and recalls it for relevant tasks. A correction to the same item replaces its previous value. Ask what was recorded or ask the agent to forget a specific item.
+
+Records live in the workspace's `.bailu-memory/` directory, which normal Git operations ignore. Updates and uninstallation preserve the project's records. A correction can carry a scope and a source. For market rules and tariffs, check the applicable official text and treat an unverified correction as a lead.
 
 ## What it does
 
@@ -69,7 +75,7 @@ See the [workflow coverage](docs/workflow-coverage.md) for inputs, tools and lim
 ```
 AGENTS.md              The rules for any agent: iron rules, every command, the skills, what the knowledge base covers
 skills/
-  power-trading/       14 power-trading skills
+  power-trading/       15 power-trading and project memory skills
   office/              5 office skills, 4 from anthropics/skills
   design/              5 design skills
   data/                6 data skills (from anthropics/knowledge-work-plugins, anthropics/financial-services)
@@ -102,6 +108,7 @@ LICENSE  NOTICE.md     MIT; notices of third-party work
 | `bailu tariff "<question>"` | Provincial transmission prices, line-loss rates, coal capacity prices |
 | `bailu docs <folder or file> "<question>"` | Finds provisions in policy documents, bills, the document library |
 | `bailu policy official 1656 --as-of 2026-03-01` | Looks up checked version evidence for a date |
+| `bailu memory show [topic]` | Finds project preferences and corrections. Use `--limit 0 --format json` to export all matches |
 | `bailu reconcile summary.xlsx bills.pdf... --spec mapping.json` | Reconciles monthly, text-based PDF bills with a workbook. Use `--format json` to export the results |
 | `bailu check <table>... [--strict]` | Validate a price or load table. Strict mode exits nonzero on errors after printing the report |
 | `bailu table "<question>" <table>...` | Statistics of and comparisons between price tables (CSV, Excel) |
@@ -129,6 +136,8 @@ Run `python scripts/knowledge_coverage.py` for a regional inventory of the ECNot
 To add to or update the handbook, the pipeline is in `scripts/`: `fetch_cited_sources.py` downloads the official pages cited → `go test` in `tools/bailu/` with `BAILU_VERIFY_STAGING=1` checks each quote of the drafts word for word → `overlap.py` finds overlaps → `merge_knowledge.py` merges → `build_documents.py` rebuilds the library. The drafts are in `docs/research/handbook/`; how to write one is in `docs/research/RULES.md` (Chinese).
 
 ## What was tested
+
+v0.4.0 tests recording, updating, isolating, removing and retaining project memory through a framework upgrade.
 
 v0.3.1 adds coverage for comparing mirror revisions, volume-weighted metering, confirmed day-ahead fills, strict data validation, and the source and cache state of settlement formulas.
 

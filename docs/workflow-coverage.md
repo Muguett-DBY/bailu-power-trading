@@ -6,6 +6,7 @@
 | 普通办公 | 项目按需加载 Word、Excel、PowerPoint、PDF 和数据分析技能 | 复杂模板渲染、公式重算和扫描件 OCR 使用格式技能的配套工具 |
 | 跨格式核对 | `office/read_file.py` 返回带页码、行号或块号的原文；`bailu reconcile` 比较多月账单，输出原值和定位 | 提供明确的列名和标签、目标单位、容差，每份 PDF 对应一个月 |
 | 文档交付 | `office/report.py` 读取一份核对结果或结构化输入，导出 Word、Excel、PowerPoint | 核对意见由使用者确认，格式验证按交付需求执行 |
+| 项目记忆 | `project-memory` 和 `bailu memory` 按主题召回偏好及项目事实，更新已有记录 | 以用户明确表达为输入，涉及市场规则时查发布机关原文 |
 | 政策与规则 | `bailu handbook`、`bailu docs`、`bailu policy search`、`bailu policy official` 分别查手册、官方原文库、ECNote 快照与已核验版本 | 查明交易日、地区和主体。每份政策的适用性看发文机关，版本登记只覆盖已核验的文件 |
 | 算账与风险 | `bailu calc`、`bailu check`、`bailu table`、`bailu risk`、`bailu curve` 使用交易员提供的数据与参数 | 报价约束和结算口径以所在市场、交易品种和交易日为准 |
 | 台账与复盘 | `bailu ledger`、`bailu review`、可选 `analysis/` | 台账依赖用户的申报、成交和计量记录。预测给出历史回测误差，市场行情与成交由交易平台提供 |

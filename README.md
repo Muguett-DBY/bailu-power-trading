@@ -22,7 +22,7 @@
 
 | 放进项目的东西 | 位置 | 作用 |
 | --- | --- | --- |
-| 技能 | `.agents/skills/`（或你的 agent 自己的技能目录） | 30 个技能，agent 按任务加载 |
+| 技能 | `.agents/skills/`（或你的 agent 自己的技能目录） | 31 个技能，agent 按任务加载 |
 | 规则 | 项目根目录的 `AGENTS.md`（Claude Code 另有 `CLAUDE.md` 指向它） | 告诉 agent 读框架的守则、`bailu` 在哪里 |
 | 框架 | 项目根目录或 `bailu-power-trading/` | 手册、官方文件库、ECNote 快照、工具、脚本 |
 | 记录 | `.bailu-install.json` | 记下放入了什么，卸载时用 |
@@ -38,6 +38,12 @@
 ```
 
 已安装 v0.3.0 或更新版时，也可以在框架目录运行 `python scripts/bootstrap.py --project <项目根目录> --check-update`，应用更新时把最后一个参数换成 `--update`。v0.3.1 的脚本会比较公开镜像可用的提交，两边一致时优先此前部署的镜像，历史分叉时报告两边提交。升级先在临时工作树校验工具和知识库，再快进应用。部署文件的备份位于框架目录下的 `.bailu/update-backups/`，应用失败时恢复原部署。
+
+## 项目记忆
+
+从 v0.4.0 起，在项目对话里说「以后结算简报先给结论」或「纠正一下，本项目总表的购电量在 C 列」，支持项目规则和工具调用的 Agent 会按 `project-memory` 技能记录。后来再次处理同类任务时会按需查询。再次纠正同一事项时更新原记录。也可以直接问「这个项目记住了什么」或说「忘掉结算简报格式」。
+
+记录保存在当前项目的 `.bailu-memory/`，升级和卸载都会保留，常规 Git 操作会忽略该目录。每条纠正可以标明适用范围及来源。项目内表名、列名和内部口径可按用户确认更新；发布机关的规则仍需核验原文，缺少依据的纠正可作为待核实线索。公共手册与政策库继续走原有核验流程。
 
 ## 能做什么
 
@@ -55,6 +61,7 @@
 | 分析交易平台的电价表：均价、最高最低、按月和按时段统计与比较、月度分析报告 | `bailu table`，技能 `monthly-price-report` |
 | 查本省政策文件的条款、核对电费账单 | `bailu docs`，技能 `policy-lookup`、`bill-review` |
 | 查某个交易日的新旧版政策 | `bailu policy official`，查指定日期、文件、地区和官方依据 |
+| 按项目沿用报告习惯或吸收用户纠正 | `project-memory` 技能和 `bailu memory`，支持按主题查看和撤回 |
 | 成批核对 Excel 月报与 PDF 账单 | `bailu reconcile`，逐月列出差额、缺项、工作表单元格和 PDF 页码 |
 | 基线预测与回测：电价、负荷、出力的三种基线和滚动回测误差、预测区间；日前与实时的价差、日前申报比例、储能上界 | 分析层 `analysis/`（可选） |
 | 给一张表做画像、做统计分析、交付前复核、把结果画成图 | 技能 `explore-data`、`analyze`、`statistical-analysis`、`validate-data`、`data-visualization`、`clean-data-xls` |
@@ -77,7 +84,7 @@
 ```
 AGENTS.md              给 agent 的工作守则：铁律、全部命令、技能清单、知识库范围
 skills/
-  power-trading/       14 个电力交易技能
+  power-trading/       15 个电力交易和项目记忆技能
   office/              5 个办公技能，其中 4 个来自 anthropics/skills
   design/              5 个设计技能
   data/                6 个数据技能（来自 anthropics/knowledge-work-plugins、anthropics/financial-services）
@@ -112,6 +119,8 @@ LICENSE  NOTICE.md     MIT；第三方声明
 | `bailu policy search "<关键词>" [--province 天津]` | 检索随附的 ECNote 政策快照，支持文号、地区、类目和正文短语 |
 | `bailu policy show <文档ID> ["<问题>"]` | 按目录命中 ID 查看镜像来源与正文，带问题时只返回相关摘录 |
 | `bailu policy official 1656 --as-of 2026-03-01` | 按地区和类目查询版本事实，查看指定交易日的状态 |
+| `bailu memory show [主题]` | 查项目记忆，支持按类别和范围筛选。用 `--limit 0 --format json` 导出全部匹配记录 |
+| `bailu memory save`、`bailu memory forget` | 写入、更新或撤回项目记忆，参数见 `bailu --help` |
 | `bailu reconcile 总表.xlsx 账单.pdf... --spec 对账配置.json` | 核对文字版月度账单，支持 `--format json` 导出证据和差额 |
 | `bailu check <表格文件>... [--strict]` | 体检电价、负荷表。严格模式发现错误时返回非零并输出报告 |
 | `bailu table "<问题>" <电价表文件>...` | 统计或比较电价表（CSV、Excel） |
@@ -140,6 +149,8 @@ LICENSE  NOTICE.md     MIT；第三方声明
 要补充或更新手册，流程在 `scripts/` 里：`fetch_cited_sources.py` 下载被引用的官方页面 → `go test`（在 `tools/bailu/` 里，设 `BAILU_VERIFY_STAGING=1`）逐字核对研究稿的引文 → `overlap.py` 查重 → `merge_knowledge.py` 并入 → `build_documents.py` 重建文件库。研究稿在 `docs/research/handbook/`，写法见 `docs/research/RULES.md`。
 
 ## 测试情况
+
+v0.4.0 增加了项目记忆回归，覆盖保存、同一主题更新、隔离、删除与升级后保留。
 
 v0.3.1 覆盖双镜像选版、交易复盘及公式证据。同日计量按电量加权，日前成交与同方向申报只计一次。对账区分业务数据缺失和公式无可用缓存。发布流程运行 Go、部署、办公与分析测试。
 

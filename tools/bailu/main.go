@@ -26,7 +26,7 @@ import (
 	"time"
 )
 
-const version = "0.3.1"
+const version = "0.4.0"
 
 const usage = `bailu ` + version + ` — 电力交易框架的工具。数字由程序算，条文出自原文。
 
@@ -52,6 +52,10 @@ const usage = `bailu ` + version + ` — 电力交易框架的工具。数字由
                                       读取镜像文档或相关原文摘录
   bailu policy official ["<关键词>"] [--province 地区] [--as-of YYYY-MM-DD]
                                       按指定日期查已核验的官方政策版本
+  bailu memory show [主题] [--kind preference|correction] [--scope 范围] [--limit N] [--format markdown|json]
+  bailu memory save preference|correction 主题 内容 [--scope 范围] [--source 来源] [--project 项目目录]
+  bailu memory forget preference|correction 主题 [--scope 范围] [--project 项目目录]
+                                      召回、更新或忘记本项目的偏好和纠正，三种操作均可指定 --project
   bailu compute "<算式>"              精确四则运算
   bailu extract <文件>...             把政策文件（PDF、Word、文本）转成纯文本
   bailu reconcile 总表.xlsx 账单.pdf... --spec 对账配置.json [--format markdown|json]
@@ -196,6 +200,8 @@ func run(args []string, out io.Writer) error {
 	switch command {
 	case "policy":
 		return policyCommand(o, out)
+	case "memory":
+		return memoryCommand(o, out)
 	case "reconcile":
 		return reconcileCommand(o, out)
 	case "check":

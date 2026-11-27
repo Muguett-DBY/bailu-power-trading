@@ -133,6 +133,9 @@ class UpdateTest(unittest.TestCase):
         self.assertEqual(self.manifest.read_bytes(), self.old_manifest)
 
     def test_upgrade_preflights_and_preserves_local_files(self):
+        memory = self.project / ".bailu-memory" / "project-fact.json"
+        self.write(memory, b'{"key":"report style","value":"decision first"}')
+
         def deploy(project, source, mirror, directories, *, no_skills, tool_origin=""):
             self.assertEqual(mirror, "gitee")
             if no_skills:
@@ -154,6 +157,7 @@ class UpdateTest(unittest.TestCase):
         self.assertEqual(self.git(self.checkout, "rev-parse", "HEAD"), self.new)
         self.assertEqual(self.skill.read_bytes(), b"my edited skill\n")
         self.assertEqual((self.project / "invoice.txt").read_bytes(), b"business data")
+        self.assertEqual(memory.read_bytes(), b'{"key":"report style","value":"decision first"}')
         saved = list((self.checkout / ".bailu/update-backups").glob(f"*/before/{self.checkout.name}/.bailu/bin/{self.exe}"))
         self.assertEqual([file.read_bytes() for file in saved], [b"previous binary"])
         self.assertEqual(list(self.project.glob(".bailu-update-*")), [])

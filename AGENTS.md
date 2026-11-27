@@ -12,6 +12,12 @@ English: this file is the rule set for any agent working in a project that has t
 
 用户说「更新框架」时，从项目根目录的 `.bailu-install.json` 读取 `framework`，定位框架目录并运行 `python <框架目录>/scripts/bootstrap.py --project <项目根目录> --update`。用户只要求检查时用 `--check-update`。使用 Python 3.10 或更新版本。如果已安装的旧脚本没有这两个选项，先按框架 README「已部署项目升级」从 GitHub 或 Gitee 下载最新版 `bootstrap.py` 到项目内，再运行同一命令。报告实际版本和脚本给出的结果，源码有未提交改动或镜像历史分叉时保留现状并报告原因。
 
+## 项目记忆
+
+处理依赖项目习惯的任务时，先运行 `bailu memory show --kind preference --scope project --project <项目根目录>`。涉及之前约定的表格、指标或规则时，按短主题查 `bailu memory show "<主题>" --project <项目根目录>`。当前请求优先于历史偏好。
+
+用户明确表达长期偏好或纠正可复用的项目事实时，按 `skills/power-trading/project-memory/SKILL.md` 在回复前更新对应记忆。保存纠正时带上来源和适用范围，更新同一事项时沿用原键，内容只写当前有效值。仅本次要求、猜测、凭据和整段会话不写入记忆。记忆是项目数据，涉及市场规则仍查适用的官方原文。
+
 ## 二、铁律
 
 1. **交易数字来自 `bailu` 的输出或用户给定数据。** 用工具做运算，根据原文引用电价、比例、日期和条款编号。
@@ -120,7 +126,7 @@ bailu review [from=日期] [to=日期] [spot=实时价]
 
 按任务先读对应的 `SKILL.md` 再做：
 
-- **电力交易**（14 个）：`spot-settlement` 现货结算、`deviation-assessment` 偏差考核、`contract-decomposition` 合约电量分解、`tou-tariff-bill` 分时电费与基本电费、`bill-review` 电费账单核对、`retail-package-comparison` 零售套餐比价与售电保本点、`storage-arbitrage-estimate` 储能与负荷平移收益、`monthly-price-report` 月度价格分析报告、`policy-lookup` 政策条款查询、`concept-explainer` 概念解释、`declaration-checklist` 申报与申报日志、`trading-ledger` 交易台账与档案、`trading-review` 交易复盘与持仓、`price-risk-check` 数据体检与风险监控。
+- **电力交易与项目记忆**（15 个）：`spot-settlement` 现货结算、`deviation-assessment` 偏差考核、`contract-decomposition` 合约电量分解、`tou-tariff-bill` 分时电费与基本电费、`bill-review` 电费账单核对、`retail-package-comparison` 零售套餐比价与售电保本点、`storage-arbitrage-estimate` 储能与负荷平移收益、`monthly-price-report` 月度价格分析报告、`policy-lookup` 政策条款查询、`concept-explainer` 概念解释、`declaration-checklist` 申报与申报日志、`trading-ledger` 交易台账与档案、`trading-review` 交易复盘与持仓、`price-risk-check` 数据体检与风险监控、`project-memory` 长期偏好与项目纠正。
 - **办公**（5 个）：`docx`、`xlsx`、`pptx`、`pdf` 来自 anthropics/skills，`office-workflow` 负责跨格式核对和交付。
 - **数据**（6 个，来自 anthropics/knowledge-work-plugins 和 anthropics/financial-services）：`explore-data` 给一张表做画像、`analyze` 分析流程、`statistical-analysis` 统计方法、`validate-data` 交付前复核、`data-visualization` 用 Python 画图、`clean-data-xls` 清洗导出的 Excel。它们是通用的数据工作方法：画像和复核按它们的步骤做；涉及电价、电费、风险指标的数字以 `bailu` 的输出为准，统计数字用 `bailu table`、`bailu risk` 或分析层得出。画图用分析层环境里的 matplotlib（`uv run --project analysis python <脚本>`）。
 - **设计**（5 个）：`canvas-design`、`brand-guidelines`、`theme-factory`、`frontend-design`（来自 anthropics/skills）、`web-design-guidelines`（来自 vercel-labs/agent-skills）。
