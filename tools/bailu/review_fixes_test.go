@@ -160,3 +160,12 @@ func TestPublishedPricesAnswerEachPartOfAQuestionAndNameWhatIsMissing(t *testing
 	coreWants(t, coreSay(t, "tariff", "江苏煤电容量电价"), "之后的数值以国家发展改革委和省级价格主管部门的最新文件为准")
 	coreLacks(t, coreSay(t, "tariff", "江苏煤电容量电价"), "江苏电网输配电价表")
 }
+
+func TestAComparisonOfPeriodsTheTableLacksSaysSoFirst(t *testing.T) {
+	table := coreSample(t, "january.csv", "日期,时间,日前价格\n2024-01-01,00:00,400\n2024-01-01,01:00,450\n2024-01-02,00:00,410\n2024-01-02,01:00,440\n")
+	said := coreSay(t, "table", "比较8月和7月的日前均价", table)
+	if !strings.HasPrefix(said, "**表中没有「8 月、7 月」的数据**，下面是全表的比较。") {
+		t.Errorf("the missing periods are not said first in:\n%s", said)
+	}
+	coreWants(t, coreSay(t, "table", "比较1月和2月的日前均价", table), "**按月比较（日前均价）**：最高的是 2024 年 1 月")
+}

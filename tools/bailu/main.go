@@ -25,7 +25,7 @@ import (
 	"time"
 )
 
-const version = "0.1.0"
+const version = "0.2.0"
 
 const usage = `bailu ` + version + ` — 电力交易框架的工具。数字由程序算，条文出自原文。
 

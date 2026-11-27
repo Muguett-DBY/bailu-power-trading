@@ -83,6 +83,10 @@ func (f *powerFlow) summarise(tables []loadedTable, query string) []tableSummary
 		summary := tableSummary{name: loaded.name, findings: findingsFor(loaded.table, rows, stats), facts: section}
 		if asked, ok := parseComparison(query); ok {
 			summary.verdict = compare(asked, rows, loaded.table)
+			// Periods the table does not hold are compared for the whole table instead: said before the verdict.
+			if missing, _, found := strings.Cut(scope, "，"); found && strings.HasPrefix(scope, "表中没有") {
+				summary.verdict = "**" + missing + "**，下面是全表的比较。\n\n" + summary.verdict
+			}
 		}
 		summaries = append(summaries, summary)
 	}
