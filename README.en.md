@@ -8,17 +8,17 @@ It is taken out of Bailu.SI, a desktop assistant for electricity trading, which 
 
 ## Deploy with one sentence
 
-Open a folder in any agent that can run commands and read and write files — Codex, Claude Code, WorkBuddy, Cursor, pi and others — and send it this, as it is:
+Open the project folder in an agent that can run commands and read and write files. Use the same prompt in mainland China and elsewhere.
 
 ```text
-Set this folder up as my electricity-trading workspace. Record its absolute path and clone the public repository from https://gitee.com/Muguett/bailu-power-trading.git or, if it fails, https://github.com/Muguett-DBY/bailu-power-trading.git with Git sign-in prompts disabled (GIT_TERMINAL_PROMPT=0 and GCM_INTERACTIVE=never). Clone into this folder if empty, or into a bailu-power-trading subfolder otherwise. Read AGENTS.md in the repository, then use an available Python 3.10+ launcher (python3, python, or py -3 on Windows) to run scripts/deploy.py --project "<original folder's absolute path>" from the repository. Run bailu selfcheck and bailu policy search --province 天津 --limit 1 using the tool path in .bailu-install.json at the project root. Report the tool path and how to get started. Keep everything in the original folder and report any actual error.
+Set up this folder as my Bailu electricity-trading workspace now. Record its absolute path and download the bootstrap script to a temporary file within the project. Fetch https://raw.githubusercontent.com/Muguett-DBY/bailu-power-trading/main/scripts/bootstrap.py first. If it fails, times out, or returns a web page, immediately try https://gitee.com/Muguett/bailu-power-trading/raw/main/scripts/bootstrap.py . Limit each download to 15 seconds. Confirm the response is Python source and run it with Python 3.10+, passing --project followed by the absolute path you recorded and --mirror github or --mirror gitee to match the download that succeeded. If your agent uses a dedicated project skill directory, also pass --skills-dir .agents/skills and --skills-dir <that directory>. The script clones the repository, switches mirrors when needed, and runs the deployment checks. Read the project's AGENTS.md after it finishes and report the tool path and check results. Keep writes inside the project and report the actual errors if both mirrors fail.
 ```
 
-When it is done the agent tells you the deployment is complete and where the `bailu` tool is. From then on, every new session in this folder finds the rules in the project's `AGENTS.md`.
+The bootstrap shallow-clones the first available source mirror and retries the other on failure or timeout. It prefers the successful source mirror for the matching binary and SHA-256 manifest, with the other mirror and jsDelivr as fallbacks. It checks the tool and policy library and records the tool path in `.bailu-install.json` at the project root.
 
 Both public mirrors include the handbook, 151 independently sourced official documents, and the early ECNote snapshot of 2,180 records. Run `bailu docs "<question>"` to search the official library or `bailu policy search --province 天津` to find material in the snapshot. A snapshot date or status is a catalog label. Check the original issuer's text when determining which version applies. See [snapshot provenance](knowledge/ecnote/README.md).
 
-You need Python 3.10 or newer (the deployment uses the standard library only). `bailu` comes prebuilt for Windows, Linux and macOS, taken from Gitee, GitHub or jsDelivr and checked against SHA256SUMS; Go is not required.
+Deployment needs Git and Python 3.10+ (`python3`, `python`, or `py -3` on Windows). Prebuilt tools are available for Windows, Linux and macOS. Public mirror deployment needs no repository account or Go. For an agent with a dedicated project skill directory, pass `--skills-dir` more than once, for example `--skills-dir .agents/skills --skills-dir .claude/skills`.
 
 The deployment is **self-contained**: everything stays in the folder. No global software is installed and nothing outside the project is changed.
 
@@ -66,6 +66,7 @@ knowledge/
 tools/bailu/           The Go source and tests of the bailu tool
 analysis/              The optional analysis layer: baseline forecasts, back-tests
 scripts/
+  bootstrap.py         Public mirror entry point, clone failover and verification
   deploy.py            Deploy and uninstall
   build_documents.py   Build the document library from the official sources kept for verification
   fetch_cited_sources.py … merge_knowledge.py   Checking and merging knowledge
@@ -107,11 +108,11 @@ To add to or update the handbook, the pipeline is in `scripts/`: `fetch_cited_so
 
 ## What was tested
 
-**The deployment script** was tried end to end on a local copy of the release files: 20 checks passed. The tool is fetched and checked against SHA256SUMS; an archive with one byte changed is refused and the next address is used; the skills and the rule files land in the project; a second run keeps the record; the uninstall removes what was put there and keeps a rule file the user changed; `--skills-dir` has to be inside the project.
+**Deployment tests** cover switching mirrors after clone timeouts, failed binary downloads and checksum mismatches. They also cover redeployment, retaining user edits on uninstall, and keeping skills inside the project. Run `python -m unittest discover -s scripts -p "test_*.py"` to repeat them.
 
-**The one-sentence deployment** was tried as a user would: in an empty folder the sentence above was given to pi (model GLM-5.3-Flash) and nothing else. It cloned the framework, read `AGENTS.md`, ran `python scripts/deploy.py` and `bailu selfcheck`, and the 29 skills and the tool landed inside the folder with nothing installed globally. The Gitee mirror was private at the time, so the clone and the download fell back to GitHub by themselves. After the release the tool was fetched from jsDelivr and matched SHA256SUMS. Once the Gitee mirror was public, the framework was cloned from Gitee and deployed once more without signing in, with the tool taken from Gitee and the self-check passing.
+**Public mirrors** were each cloned anonymously and used to deploy v0.2.2 on Windows. Both tools passed SHA-256 verification. A previous empty-folder trial with pi and GLM-5.3 Flash also verified Gitee deployment and policy search. The deployment tests exercise the new entry point's fallback in both directions.
 
-**The tool's own tests**: 156 tests in `tools/bailu`, covering the arithmetic of the 13 calculators (each with a case worked by hand from the official document), reading numbers (jiao, fen and li among them), follow-ups, the provincial price tables, 205 handbook retrieval questions, the search for provisions in policy documents, the data check, the curve check, the ledger and the review, the risk figures; 10 tests of the deployment script and 9 of the analysis layer.
+**Tool tests** cover all 13 calculators, follow-up questions, provincial tariffs, handbook and policy search, data checks, curve validation, the ledger, review, and risk metrics. `analysis/` has a separate test suite.
 
 **The knowledge**: each of the 3,314 quotes merged into the handbook was looked up word for word in a copy of the official document fetched from its address and checked to lie under the provision cited; all matched. For 106 sentences the document could not be fetched; they were checked against its text as read through a reader, as the section above says.
 

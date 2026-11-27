@@ -9,6 +9,7 @@ import hashlib
 import importlib.util
 import io
 import json
+import os
 import tempfile
 import unittest
 import zipfile
@@ -158,13 +159,36 @@ class DeploymentTest(unittest.TestCase):
         def version(path):
             return "bailu 0.0.0" if path == tool else f"bailu {self.deploy.VERSION}"
 
-        with patch.object(self.deploy.sys, "platform", "win32"), patch.object(
+        with patch.dict(os.environ, BAILU_RELEASE_MIRROR="gitee"), patch.object(self.deploy.sys, "platform", "win32"), patch.object(
             self.deploy, "system", return_value="windows-amd64"
-        ), patch.object(self.deploy, "fetch", side_effect=download), patch.object(self.deploy, "tool_version", side_effect=version):
+        ), patch.object(self.deploy, "fetch", side_effect=download) as fetch, patch.object(self.deploy, "tool_version", side_effect=version):
             placed, origin = self.quietly(self.deploy.install_tool, False)
         self.assertEqual(placed, tool)
         self.assertEqual(origin, "github.com")
         self.assertEqual(tool.read_bytes(), b"updated")
+        self.assertEqual([call.args[0].split("/")[2] for call in fetch.call_args_list], ["gitee.com", "gitee.com", "github.com", "github.com"])
+
+    def test_github_release_failure_falls_back_to_gitee_before_cdn(self):
+        candidate = self.home / "bailu.exe"
+        archive = io.BytesIO()
+        with zipfile.ZipFile(archive, "w") as zipped:
+            zipped.writestr("bailu.exe", b"from Gitee")
+        package = archive.getvalue()
+        name = "bailu-windows-amd64.zip"
+        sums = f"{hashlib.sha256(package).hexdigest()}  {name}\n".encode()
+
+        def download(url, limit):
+            if "github.com" in url:
+                raise TimeoutError("GitHub unavailable")
+            return sums if url.endswith("SHA256SUMS") else package
+
+        with patch.dict(os.environ, BAILU_RELEASE_MIRROR="github"), patch.object(
+            self.deploy, "fetch", side_effect=download
+        ) as fetch, patch.object(self.deploy, "tool_version", return_value=f"bailu {self.deploy.VERSION}"):
+            origin = self.quietly(self.deploy.download_tool, name, candidate.name, candidate)
+        self.assertEqual(origin, "gitee.com")
+        self.assertEqual(candidate.read_bytes(), b"from Gitee")
+        self.assertEqual([call.args[0].split("/")[2] for call in fetch.call_args_list], ["github.com", "gitee.com", "gitee.com"])
 
     def test_selfcheck_failure_does_not_install_skills_or_rules(self):
         project = self.home / "project"

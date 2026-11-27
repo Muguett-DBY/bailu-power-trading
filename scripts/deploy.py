@@ -36,8 +36,8 @@ from pathlib import Path
 
 FRAMEWORK = Path(__file__).resolve().parent.parent
 VERSION = "0.2.2"
-# Where the prebuilt tool is taken from, in the order that suits most: the
-# mirror in mainland China first, then GitHub, then a content delivery network.
+# The default order for a direct install. The bootstrap prefers the mirror
+# that served the source, and leaves the other mirror and CDN as fallbacks.
 # {file} is the name of what is fetched: the archive, or SHA256SUMS beside it.
 DOWNLOADS = [
     "https://gitee.com/Muguett/bailu-power-trading/releases/download/v{version}/{file}",
@@ -61,7 +61,7 @@ def system() -> str:
 
 
 def fetch(url: str, limit: int) -> bytes:
-    with urllib.request.urlopen(url, timeout=60) as response:
+    with urllib.request.urlopen(url, timeout=20) as response:
         data = response.read(limit + 1)
     if len(data) > limit:
         raise ValueError("文件比预期的大")
@@ -90,14 +90,17 @@ def matches_version(path: Path) -> bool:
 
 
 def download_tool(name: str, exe: str, candidate: Path) -> str:
-    for template in DOWNLOADS:
+    downloads = DOWNLOADS
+    if os.getenv("BAILU_RELEASE_MIRROR") == "github":
+        downloads = [DOWNLOADS[1], DOWNLOADS[0], *DOWNLOADS[2:]]
+    for template in downloads:
         base = template.format(version=VERSION, file="")
         host = base.split("/")[2]
         try:
-            archive = fetch(base + name, 50 * 1024 * 1024)
             expected = listed_in(fetch(base + "SHA256SUMS", 1024 * 1024).decode("utf-8"), name)
             if not expected:
                 raise ValueError("SHA256SUMS 里没有 " + name)
+            archive = fetch(base + name, 50 * 1024 * 1024)
             if hashlib.sha256(archive).hexdigest() != expected:
                 raise ValueError("压缩包的 SHA-256 与 SHA256SUMS 不符")
             with zipfile.ZipFile(io.BytesIO(archive)) as zipped:

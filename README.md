@@ -8,15 +8,15 @@
 
 ## 一句话部署
 
-在 Codex、Claude Code、WorkBuddy、Cursor、pi 等任何能运行命令、读写文件的 agent 里打开一个文件夹，把下面这句原样发给它：
+在能运行命令、读写文件的 Agent 里打开项目文件夹，复制下面的提示词。大陆和海外用同一段。
 
 ```text
-请把当前文件夹配置成电力交易工作环境。记下它的绝对路径，从 https://gitee.com/Muguett/bailu-power-trading.git 克隆公开仓库，失败就试 https://github.com/Muguett-DBY/bailu-power-trading.git，禁用 Git 登录提示（GIT_TERMINAL_PROMPT=0、GCM_INTERACTIVE=never）。空文件夹直接克隆到当前目录，非空则克隆到 bailu-power-trading 子目录。读完仓库的 AGENTS.md，在仓库目录用现有的 Python 3.10+（python3、python 或 Windows 的 py -3）运行 scripts/deploy.py --project "<原文件夹绝对路径>"。用项目根目录 .bailu-install.json 里的 tool 路径运行 bailu selfcheck 和 bailu policy search --province 天津 --limit 1，确认工具和政策库就绪后，告诉我工具路径和如何开始用。所有操作都在原文件夹内，遇到失败请给出实际错误。
+请现在把当前文件夹部署为 Bailu 电力交易工作区。记下当前目录的绝对路径，把部署脚本下载到项目内的临时文件。从 https://raw.githubusercontent.com/Muguett-DBY/bailu-power-trading/main/scripts/bootstrap.py 获取，失败、超时或返回网页时立即改用 https://gitee.com/Muguett/bailu-power-trading/raw/main/scripts/bootstrap.py 。每个下载最多尝试 15 秒，确认是 Python 脚本后，用现有的 Python 3.10+ 执行它，传入 --project 和刚记下的绝对路径，以及 --mirror github 或 --mirror gitee（与下载成功的镜像一致）。如果你的 Agent 使用专用的项目级技能目录，再传 --skills-dir .agents/skills 和 --skills-dir <那个目录>。脚本会自动克隆、切换镜像并验收。完成后读取项目的 AGENTS.md，告诉我工具路径和自检结果。只在当前项目内写入，两个镜像都失败时给出实际错误。
 ```
 
-agent 做完会告诉你「部署完成」和 `bailu` 工具的路径。之后在这个文件夹里的每一次新会话，agent 都会从项目的 `AGENTS.md` 读到工作守则。
+部署脚本从先可用的镜像浅克隆源码，克隆失败或超时就换另一个。工具和 SHA‑256 清单优先从源码镜像取，失败后依次尝试另一镜像和 jsDelivr。成功后会检查工具和政策库，并把工具路径写入项目根目录的 `.bailu-install.json`。
 
-需要 Python 3.10 或更新版本（部署只用标准库）。`bailu` 工具是预编译好的，Windows、Linux、macOS 都有，从 Gitee、GitHub 或 jsDelivr 取，取回时校验 SHA-256，不需要装 Go。
+部署需要 Git 和 Python 3.10+，用已有的 `python3`、`python` 或 Windows 的 `py -3` 即可。Windows、Linux 和 macOS 都有预编译工具。通过公开镜像部署无需仓库账号或 Go。Agent 如使用专用项目级技能目录，可以给脚本重复传 `--skills-dir`，例如 `--skills-dir .agents/skills --skills-dir .claude/skills`。
 
 部署是**绿色**的：所有东西都在当前文件夹里，不装全局软件、不改项目之外的任何文件。
 
@@ -74,6 +74,7 @@ knowledge/
 tools/bailu/           bailu 工具的 Go 源码和测试
 analysis/              可选的分析层：基线预测、回测
 scripts/
+  bootstrap.py         公开镜像入口，负责克隆、切换和验收
   deploy.py            部署与卸载
   build_documents.py   从核验时取回的官方文件生成文件库
   fetch_cited_sources.py … merge_knowledge.py   知识库的核验与并入流程
@@ -118,11 +119,11 @@ LICENSE  NOTICE.md     MIT；第三方声明
 
 ## 测试情况
 
-**部署脚本**：用发布文件的副本在本地演练了整条流程，20 项检查全部通过：取回工具并校验 SHA-256；被改过一个字节的压缩包被拒绝，改从下一个地址取；技能和规则文件落在项目里；二次部署保留记录；卸载只移除放入的东西，用户改过的规则文件保留；`--skills-dir` 只能放在项目内。
+**部署测试**覆盖源码克隆超时后切换镜像、工具下载失败或校验不符后的切换、二次部署、卸载保留用户修改，以及技能目录的项目边界。用 `python -m unittest discover -s scripts -p "test_*.py"` 复跑。
 
-**一句话部署实测**：在一个空文件夹里把上面那句提示词原样交给 pi（模型 GLM-5.3-Flash），不插手：它自己克隆了框架、读完 `AGENTS.md`、运行 `python scripts/deploy.py`、跑 `bailu selfcheck`，29 个技能和工具都落在项目文件夹里，没有安装任何全局的东西。当时 Gitee 仓库还是私有的，克隆和取工具都自动改用了 GitHub。发布后还从 jsDelivr 取回过工具，与 SHA256SUMS 一致。Gitee 仓库公开后，又在不登录的情况下从 Gitee 克隆并部署了一遍，工具取自 Gitee，自检通过。
+**公开镜像**已在 Windows 上分别匿名克隆并部署 v0.2.2，两个镜像的工具均通过 SHA‑256 自检。此前用 pi（GLM‑5.3 Flash）在空目录实测过从 Gitee 部署和查询政策。新入口的双向故障切换由部署测试覆盖。
 
-**工具自身的测试**：`tools/bailu` 里 156 个测试，覆盖 13 种计算的算式（每种都有照官方文件手算的用例）、数字读取（含角、分、厘）、追问、分省电价表、205 道手册检索题、政策文件的条款检索、数据体检、曲线校验、台账与复盘、风险指标；部署脚本 10 个测试，分析层 9 个。
+**工具测试**覆盖 13 种计算、追问、分省电价表、手册及政策检索、数据体检、曲线校验、台账、复盘和风险指标。`analysis/` 有独立测试。
 
 **知识核验**：并入手册的 3,314 条引文逐条在从官方地址取回的原文里逐字查找，并核对它确实在所引的条款下，全部相符。其中 106 句所在的文件取不回来，是用网页阅读工具读取后抄录留存的，见上一节。
 
