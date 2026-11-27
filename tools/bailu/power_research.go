@@ -89,22 +89,6 @@ func (f *powerFlow) summarise(tables []loadedTable, query string) []tableSummary
 	return summaries
 }
 
-// asksFigures asks for numbers of the price table of the chat without naming a
-// comparison: "按月统计一下日前价格", or a short follow-up in other words,
-// "日前的呢". What a term means is not that.
-func asksFigures(message string) bool {
-	if len([]rune(message)) <= 8 && containsAny(message, "日前", "实时", "均价", "价差", "最高", "最低", "峰谷") {
-		return true
-	}
-	return containsAny(message, "价格", "均价", "电价", "统计", "最高", "最低", "排名", "走势", "波动", "价差", "负荷", "数据") &&
-		!containsAny(message, "什么是", "是什么", "什么意思", "区别", "解释", "为什么", "怎么回事", "怎么理解", "指的是")
-}
-
-// asksReport names a written report, as against the figures of a table.
-func asksReport(message string) bool {
-	return containsAny(message, "报告", "月报", "日报", "复盘", "情况说明", "汇报")
-}
-
 var (
 	yearMonthDay = regexp.MustCompile(`(\d{4})\s*年\s*(\d{1,2})\s*月(?:\s*(\d{1,2})\s*日)?`)
 	monthDay     = regexp.MustCompile(`(\d{1,2})\s*月\s*(\d{1,2})\s*日`)
@@ -264,7 +248,8 @@ func (f *powerFlow) documents(ctx context.Context, t powerTurn, query string) ([
 	}
 	var sources []source
 	for _, file := range t.inputs {
-		if file.Kind != "pdf" && file.Kind != "docx" {
+		// A price table is not searched for a provision; the other kinds of file are.
+		if !slices.Contains([]string{"pdf", "docx", "txt", "md"}, file.Kind) {
 			continue
 		}
 		t.emit("step", "检索附件 "+file.Name)

@@ -27,8 +27,14 @@ func TestSkillsPointAtWhatTheFrameworkHas(t *testing.T) {
 		}
 		for _, skill := range skills {
 			name := filepath.Base(filepath.Dir(skill))
-			if _, err := os.Stat(filepath.Join(filepath.Dir(skill), "LICENSE.txt")); group != "power-trading" && err != nil {
-				t.Errorf("%s/%s has no license file", group, name)
+			if group != "power-trading" {
+				// The licence file is the text of the licence, not a note on where to find it.
+				body, err := os.ReadFile(filepath.Join(filepath.Dir(skill), "LICENSE.txt"))
+				if err != nil {
+					t.Errorf("%s/%s has no license file: %v", group, name, err)
+				} else if text := string(body); !strings.Contains(text, "Version 2.0, January 2004") && !strings.Contains(text, "Permission is hereby granted, free of charge") {
+					t.Errorf("%s/%s: LICENSE.txt holds neither the Apache 2.0 nor the MIT text", group, name)
+				}
 			}
 			if group != "power-trading" {
 				continue

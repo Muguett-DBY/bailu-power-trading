@@ -16,10 +16,11 @@ import (
 var (
 	plainNumber = regexp.MustCompile(`^\s*(-?\d[\d,，]*(?:\.\d+)?)\s*(%|％)?\s*$`)
 	energyUnit  = regexp.MustCompile(`(?i)^\s*(-?\d[\d,，]*(?:\.\d+)?)\s*(万)?\s*(千瓦时|kwh|兆瓦时|mwh|度)\s*$`)
-	priceUnit   = regexp.MustCompile(`(?i)^\s*(-?\d[\d,，]*(?:\.\d+)?)\s*(元|圆|厘|分)?\s*/\s*(兆瓦时|mwh|千瓦时|kwh|度)\s*$`)
+	priceUnit   = regexp.MustCompile(`(?i)^\s*(-?\d[\d,，]*(?:\.\d+)?)\s*(元|圆|角|厘|分)?\s*/\s*(兆瓦时|mwh|千瓦时|kwh|度)\s*$`)
 )
 
 var (
+	ten         = decimal.NewFromInt(10)
 	hundred     = decimal.NewFromInt(100)
 	thousand    = decimal.NewFromInt(1000)
 	tenThousand = decimal.NewFromInt(10000)
@@ -65,6 +66,8 @@ func parsePrice(text string) (decimal.Decimal, error) {
 		value = value.Div(thousand)
 	}
 	switch match[2] {
+	case "角":
+		value = value.Div(ten)
 	case "厘":
 		value = value.Div(thousand)
 	case "分":

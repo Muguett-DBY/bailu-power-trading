@@ -70,7 +70,7 @@ func asksLiveFigures(message string) bool {
 // the calculation the chat made last. What comes back is for the user, or —
 // saidToModel — an instruction for the agent that called, when the message
 // asks how a calculation works rather than for its result.
-func (f *powerFlow) calculate(m *chatMemory, t powerTurn, chosen string) (text string, saidToModel bool, err error) {
+func (f *powerFlow) calculate(m *chatMemory, t powerTurn, chosen string, fixed bool) (text string, saidToModel bool, err error) {
 	intent := chosen
 	q := readQuantities(t.message, intent)
 	// Two packages or two months in one message would add up to a total that is
@@ -92,14 +92,22 @@ func (f *powerFlow) calculate(m *chatMemory, t powerTurn, chosen string) (text s
 		parts, weights := q.parts, q.weights
 		q = mergeQuantities(q, m.done.q, containsAny(t.message, "加上", "再加", "算上", "补充"))
 		q.parts, q.weights = parts, weights
+	case m.pending == nil && m.done != nil && takesOver(intent, m.done.q):
+		// "偏差率是多少" after a settlement names another calculator, but it is
+		// the deviation of the numbers the chat already gave: those carry over,
+		// the shares an earlier request cut aside as above.
+		parts, weights := q.parts, q.weights
+		q = mergeQuantities(q, m.done.q, false)
+		q.parts, q.weights = parts, weights
 	}
 	m.pending = nil
 	// The label follows the numbers when the agent's does not fit them. A
 	// deviation never needs a contract price or a spot price: a message that
 	// brings both is a bill. So is a bill that names no contract volume, and a
 	// bill of a user who has no contract at all.
-	if intent == intentDeviation && q.actualEnergy.set && (q.contractPrice.set && (q.dayAheadPrice.set || q.realTimePrice.set) || noDeal.MatchString(t.message)) ||
-		intent == intentContract && !q.contractEnergy.set && q.parts == 0 && len(q.weights) == 0 && q.actualEnergy.set {
+	// fixed says the caller named the kind itself: it is kept as named.
+	if !fixed && ((intent == intentDeviation && q.actualEnergy.set && (q.contractPrice.set && (q.dayAheadPrice.set || q.realTimePrice.set) || noDeal.MatchString(t.message))) ||
+		intent == intentContract && !q.contractEnergy.set && q.parts == 0 && len(q.weights) == 0 && q.actualEnergy.set) {
 		intent = intentSettle
 	}
 	// Read as a deviation, a bill of a user without a contract has not yet
@@ -145,15 +153,20 @@ func (f *powerFlow) calculate(m *chatMemory, t powerTurn, chosen string) (text s
 	return text, false, err
 }
 
-// adjustsLast tells whether a message the model filed under no calculation
-// carries on the one the chat made last: it names a result of it ("那考核费用
-// 呢"), or it reads as an adjustment and brings a number ("低谷改成 400 千瓦时呢").
-func adjustsLast(message, last string) bool {
-	if named := calculatorNamed(message); named != "" {
-		return named == last
+// takesOver says whether the calculator a message names can work with the
+// numbers of the calculation the chat made last, as the deviation can with
+// the energies of a settlement: a quantity the calculator reads — its example
+// shows which — was given before.
+func takesOver(intent string, done quantities) bool {
+	read := readQuantities(examples[intent], intent)
+	for _, field := range everyField {
+		if here, before := read.field(field.name), done.field(field.name); here.set && before.set {
+			return true
+		}
 	}
-	numbers, _, _ := scan(fullWidthDigits.Replace(message))
-	return len(numbers) > 0 && containsAny(message, "如果", "那", "换成", "改成", "假设", "再算", "刚才", "呢")
+	return len(read.tiers) > 0 && len(done.tiers) > 0 || len(read.load) > 0 && len(done.load) > 0 ||
+		len(read.charge) > 0 && len(done.charge) > 0 || len(read.discharge) > 0 && len(done.discharge) > 0 ||
+		len(read.volumes) > 0 && len(done.volumes) > 0 || len(read.scenarios) > 0 && len(done.scenarios) > 0
 }
 
 // continuesCalc tells whether a message carries on the calculation the chat

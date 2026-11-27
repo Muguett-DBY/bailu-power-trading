@@ -8,6 +8,7 @@ package main
 
 import (
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 )
@@ -19,10 +20,20 @@ func frameworkDir(explicit string) (string, error) {
 	if explicit == "" {
 		explicit = os.Getenv("BAILU_HOME")
 	}
-	var roots []string
 	if explicit != "" {
-		roots = append(roots, explicit)
+		// The folder named is the framework, or the mistake is said to be one:
+		// to look elsewhere would run on a framework the caller never meant.
+		for dir := filepath.Clean(explicit); ; dir = filepath.Dir(dir) {
+			if _, err := os.Stat(filepath.Join(dir, "knowledge", "handbook")); err == nil {
+				return dir, nil
+			}
+			if parent := filepath.Dir(dir); parent == dir {
+				break
+			}
+		}
+		return "", fmt.Errorf("--home 或 BAILU_HOME 指明的目录（%s）和它的上层目录里没有 knowledge/handbook，不是框架所在目录；请指明 bailu-power-trading 文件夹本身", explicit)
 	}
+	var roots []string
 	if working, err := os.Getwd(); err == nil {
 		roots = append(roots, working)
 	}

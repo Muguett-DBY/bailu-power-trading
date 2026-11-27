@@ -19,6 +19,7 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"strings"
 	"time"
@@ -45,6 +46,20 @@ const usage = `bailu ` + version + ` — 电力交易框架的工具。数字由
   bailu docs <文件夹或文件> "<问题>"    在政策文件里检索条款原文
   bailu compute "<算式>"              精确四则运算
   bailu extract <文件>...             把政策文件（PDF、Word、文本）转成纯文本
+  bailu check <表格文件>...           体检电价表、负荷表：缺值、重复、乱序、缺时段、离群值
+  bailu curve <曲线文件> [选项]        校验申报曲线、报价曲线、储能充放电曲线
+      --min --max 兆瓦   --ramp 每点爬坡（兆瓦）   --step 申报步长（兆瓦）
+      报价曲线：--price-min --price-max 元/兆瓦时   --side buy|sell
+      储能：--capacity 兆瓦时  --power 兆瓦  --soc-min --soc-max --efficiency --initial 百分数
+  bailu ledger add <种类> 字段=值…    记一笔台账：申报、成交、计量
+      例：bailu ledger add 申报 日期=2026-12-01 市场=日前 方向=购电 电量=1200 价格=380
+          bailu ledger add 成交 日期=2026-11-20 市场=月度 方向=购电 电量=37200 价格=390 开始=2026-12-01 结束=2026-12-31
+          bailu ledger add 计量 日期=2026-12-01 电量=1050 实时均价=430
+      台账在当前目录 bailu-workspace/ledger/（CSV，可用 Excel 打开）；--dir 可改
+  bailu ledger list [种类] [from=日期] [to=日期]   查看台账
+  bailu review [from=日期] [to=日期] [spot=实时价]  复盘：覆盖率、偏差、节省及归因
+  bailu risk <电价表> [--side buy|sell] [--confidence 95] [--mwh 1200] [--benchmark 400]
+                                      风险指标：VaR、CVaR、波动、尾部成本、回撤
   bailu selfcheck                     检查手册、电价表和计算器是否就绪
 
 通用选项：--home <目录> 指明框架所在目录（默认从当前目录向上查找，或取环境变量 BAILU_HOME）。
@@ -63,17 +78,35 @@ type options struct {
 	message string
 	earlier []string
 	home    string
+	// flags holds every other option by its long name; a command takes what it needs and refuses the rest.
+	flags   map[string]string
 	help    bool
+	version bool
 }
 
 // parse reads the words of a command. Flags may come before or after the
-// positional words, whichever way the agent writes them.
+// positional words, whichever way the agent writes them. A word that begins
+// with a minus and a number is a negative number; what comes after "--" is
+// taken for words as well.
 func parse(args []string) (options, error) {
 	var o options
 	for i := 0; i < len(args); i++ {
-		name, value, hasValue := strings.Cut(args[i], "=")
-		switch name {
-		case "-m", "--message", "-e", "--earlier", "--home":
+		word := args[i]
+		if word == "--" {
+			o.words = append(o.words, args[i+1:]...)
+			break
+		}
+		negative := len(word) > 1 && (word[1] >= '0' && word[1] <= '9' || word[1] == '.' && len(word) > 2 && word[2] >= '0' && word[2] <= '9')
+		if word != "-" && !negative && strings.HasPrefix(word, "-") {
+			name, value, hasValue := strings.Cut(word, "=")
+			if name == "-h" || name == "--help" {
+				o.help = true
+				continue
+			}
+			if name == "-V" || name == "--version" {
+				o.version = true
+				continue
+			}
 			if !hasValue {
 				if i+1 >= len(args) {
 					return o, fmt.Errorf("%s 后面要跟一个值", name)
@@ -81,24 +114,46 @@ func parse(args []string) (options, error) {
 				i++
 				value = args[i]
 			}
-			switch name {
-			case "-m", "--message":
+			switch strings.TrimLeft(name, "-") {
+			case "m", "message":
 				o.message = value
-			case "-e", "--earlier":
+			case "e", "earlier":
 				o.earlier = append(o.earlier, value)
-			case "--home":
+			case "home":
 				o.home = value
+			default:
+				if o.flags == nil {
+					o.flags = map[string]string{}
+				}
+				o.flags[strings.TrimLeft(name, "-")] = value
 			}
-		case "-h", "--help":
-			o.help = true
-		default:
-			if len(name) > 1 && name[0] == '-' {
-				return o, fmt.Errorf("不认识的选项 %s", name)
-			}
-			o.words = append(o.words, args[i])
+			continue
 		}
+		if !negative && len(word) > 1 && word[0] == '-' {
+			return o, fmt.Errorf("不认识的选项 %s", word)
+		}
+		o.words = append(o.words, word)
 	}
 	return o, nil
+}
+
+// only refuses the flags a command does not take, so that a mistyped option
+// stops the command rather than being ignored.
+func (o options) only(names ...string) error {
+	for name := range o.flags {
+		if !slices.Contains(names, name) {
+			return fmt.Errorf("不认识的选项 --%s", name)
+		}
+	}
+	return nil
+}
+
+// flag gives a flag's value or, when it was not given, what it should be.
+func (o options) flag(name, standard string) string {
+	if value, given := o.flags[name]; given {
+		return value
+	}
+	return standard
 }
 
 func run(args []string, out io.Writer) error {
@@ -110,12 +165,12 @@ func run(args []string, out io.Writer) error {
 	if len(o.words) > 0 {
 		command, o.words = o.words[0], o.words[1:]
 	}
-	if o.help || command == "" || command == "help" {
-		_, err = io.WriteString(out, usage)
+	if o.version || command == "version" {
+		_, err = fmt.Fprintln(out, "bailu", version)
 		return err
 	}
-	if command == "version" {
-		_, err := fmt.Fprintln(out, "bailu", version)
+	if o.help || command == "" || command == "help" {
+		_, err = io.WriteString(out, usage)
 		return err
 	}
 	if command == "selfcheck" {
@@ -123,6 +178,25 @@ func run(args []string, out io.Writer) error {
 	}
 	if command == "extract" {
 		return extract(o.words, out)
+	}
+	// The commands on the project's own files and records need nothing of the knowledge base.
+	switch command {
+	case "check":
+		if err := o.only(); err != nil {
+			return err
+		}
+		return checkCommand(o.words, out)
+	case "risk":
+		return riskCommand(o, out)
+	case "curve":
+		return curveCommand(o, out)
+	case "ledger":
+		return ledgerCommand(o, out)
+	case "review":
+		return reviewCommand(o, out)
+	}
+	if err := o.only(); err != nil {
+		return err
 	}
 	if !slices.Contains([]string{"calc", "handbook", "tariff", "table", "docs", "compute"}, command) {
 		return fmt.Errorf("不认识的命令 %q，bailu --help 列出全部", command)
@@ -187,23 +261,41 @@ func turnOf(command string, o options) (powerTurn, error) {
 	switch command {
 	case "calc":
 		turn.message = o.message
-	case "table":
-		// The question comes first, then the price tables.
-		if len(o.words) < 2 {
-			return turn, errors.New("bailu table 要有一个问题和至少一个电价表文件")
+	case "table", "docs":
+		// The files are told from the question by what they are named like,
+		// whichever of the two is written first.
+		var question []string
+		for _, word := range o.words {
+			if looksLikePath(word) {
+				files = append(files, word)
+			} else {
+				question = append(question, word)
+			}
 		}
-		turn.message, files = o.words[0], o.words[1:]
-	case "docs":
-		// A folder of documents, or files, then the question.
-		if len(o.words) < 2 {
-			return turn, errors.New("bailu docs 要有文件夹或文件，和一个问题")
+		turn.message = strings.Join(question, " ")
+		wants, how := "至少一个电价表文件", "bailu table \"哪个月实时均价最高\" 价格表.csv"
+		if command == "docs" {
+			wants, how = "文件夹或文件", "bailu docs 政策文件夹 \"申报价格上限是第几条\""
 		}
-		turn.message, files = o.words[len(o.words)-1], o.words[:len(o.words)-1]
-		if info, err := os.Stat(files[0]); err == nil && info.IsDir() {
-			turn.project, files = files[0], files[1:]
+		if len(files) == 0 || turn.message == "" {
+			return turn, fmt.Errorf("bailu %s 要有%s，和一个问题，例如 %s", command, wants, how)
+		}
+		if command == "docs" {
+			// A folder named among the files is the library searched; the files are read as well.
+			for i, file := range files {
+				if info, err := os.Stat(file); err == nil && info.IsDir() {
+					turn.project = file
+					files = slices.Delete(files, i, i+1)
+					break
+				}
+			}
 		}
 	default:
+		// The question is the words of the command, or the one given with --message.
 		turn.message = strings.Join(o.words, " ")
+		if turn.message == "" {
+			turn.message = o.message
+		}
 	}
 	if turn.message == "" {
 		return turn, fmt.Errorf("bailu %s 要有一个问题或一句话", command)
@@ -215,6 +307,22 @@ func turnOf(command string, o options) (powerTurn, error) {
 	turn.inputs = inputs
 	return turn, nil
 }
+
+// looksLikePath says whether a word names a file or a folder that is there, or
+// is written like one: with a separator, or ending in an extension the tools read.
+func looksLikePath(word string) bool {
+	if strings.ContainsAny(word, `/\`) {
+		return true
+	}
+	if _, err := os.Stat(word); err == nil {
+		return true
+	}
+	// Written like a file, whatever its type: a type the tools do not read is then said so.
+	return fileExtension.MatchString(word)
+}
+
+// fileExtension is the end of a word written as the name of a file.
+var fileExtension = regexp.MustCompile(`\.[A-Za-z0-9]{1,6}$`)
 
 // answer carries out a command through the tools the Bailu.SI assistant gives
 // its model, so that an agent elsewhere works from the same figures.
@@ -234,6 +342,10 @@ func answer(tools *tradingTools, command string, turn powerTurn, o options, out 
 	tool := map[string]string{"handbook": "search_handbook", "tariff": "lookup_parameters", "table": "price_table", "docs": "search_documents"}[command]
 	if command == "compute" {
 		text, err := call(turn.message, "compute", map[string]any{"expression": turn.message})
+		// A sum that cannot be done is a failure of the command, not its result.
+		if err == nil && strings.HasPrefix(text, "这个算式算不了") {
+			err = errors.New(text)
+		}
 		return write(out, text, err)
 	}
 	text, err := call(turn.message, tool, map[string]any{"query": turn.message})
@@ -249,6 +361,8 @@ func calculateCommand(tools *tradingTools, message string, o options, call func(
 	if len(o.words) > 0 {
 		kind = o.words[0]
 	}
+	// A kind named on the command line is kept as named.
+	tools.explicit = kind != ""
 	if kind == "list" || kind == "kinds" {
 		var kinds strings.Builder
 		if err := writeKinds(&kinds); err != nil {
@@ -285,6 +399,14 @@ func calculateCommand(tools *tradingTools, message string, o options, call func(
 	text := tools.call(context.Background(), "calculate", map[string]any{"kind": kindOf(message)})
 	if strings.HasPrefix(text, "这句话不是在要计算") {
 		return "", errors.New("这句话不像是在要计算。bailu calc list 列出能算的种类；用 --message 给出带数字的原话")
+	}
+	// What was written for the model of the desktop app is said to the agent here.
+	if rest, found := strings.CutPrefix(text, "这句话里没有可以计算的数字。"); found {
+		return "", errors.New("这句话里没有可以计算的数字。要算它，请给齐这些数字，" +
+			strings.TrimPrefix(strings.TrimPrefix(rest, "请解释这种计算的算法，并告诉用户给齐哪些数字就可以直接算："), "例如："))
+	}
+	if strings.HasPrefix(text, "这句话在问分省的电价参数。") {
+		return "", errors.New("这句话在问分省的电价参数：请改用 bailu tariff \"原话\" 查表")
 	}
 	return text, nil
 }

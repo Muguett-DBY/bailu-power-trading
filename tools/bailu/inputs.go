@@ -28,14 +28,14 @@ func prepareInputs(paths []string) ([]inputFile, error) {
 		}
 		kind := strings.ToLower(filepath.Ext(path))
 		switch kind {
-		case ".csv", ".xlsx", ".pdf", ".docx":
+		case ".csv", ".xlsx", ".pdf", ".docx", ".txt", ".md":
 			kind = kind[1:]
 		default:
-			return nil, fmt.Errorf("只认 CSV、Excel、PDF 或 Word 文件：%s", filepath.Base(path))
+			return nil, fmt.Errorf("只认 CSV、Excel、PDF、Word、文本或 Markdown 文件：%s", filepath.Base(path))
 		}
 		info, err := os.Stat(path)
 		if err != nil {
-			return nil, err
+			return nil, fmt.Errorf("读不了 %s：%w", filepath.Base(path), err)
 		}
 		if !info.Mode().IsRegular() {
 			return nil, fmt.Errorf("不是一个文件：%s", path)

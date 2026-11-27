@@ -4,28 +4,27 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"net/http"
 	"slices"
 	"strings"
 	"sync"
-
-	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
 // The tools the agent may call: the handbook, the policy documents, the
-// statistics of a price table and the calculators. They are served over MCP
-// from this process, so that whatever model answers — a hosted one or the
-// local one — works from the same figures: the numbers of a calculation are
-// read from the user's words by the program, and none passes through the model.
+// statistics of a price table and the calculators. The numbers of a
+// calculation are read from the user's words by the program, and none passes
+// through the model that restates them.
 
-// tradingTools is the tool server. A turn says what the tools work on — the
+// tradingTools holds them. A turn says what the tools work on — the
 // message, the price tables attached to it and the folder of the chat — before
 // the agent runs.
 type tradingTools struct {
 	flow *powerFlow
 	// hosted says a hosted model answers, which is given arithmetic of its own.
 	hosted bool
-	mu     sync.Mutex
+	// explicit says the caller named the kind of calculation itself: the words of
+	// the message, and the numbers it carries, do not turn it into another.
+	explicit bool
+	mu       sync.Mutex
 	// memory and turn are those of the turn being answered.
 	memory *chatMemory
 	turn   powerTurn
@@ -62,31 +61,6 @@ func (t *tradingTools) begin(m *chatMemory, turn powerTurn) error {
 	clear(t.calculated)
 	t.counted, t.looked, t.searched = false, false, false
 	return nil
-}
-
-// server is the tools as an MCP server.
-func (t *tradingTools) server() *mcp.Server {
-	server := mcp.NewServer(&mcp.Implementation{Name: "bailu", Version: "1.0"}, nil)
-	for _, tool := range agentTools(t.hosted) {
-		mcp.AddTool(server, &mcp.Tool{Name: tool.Function.Name, Description: tool.Function.Description, InputSchema: tool.Function.Parameters},
-			func(ctx context.Context, _ *mcp.CallToolRequest, args map[string]any) (*mcp.CallToolResult, any, error) {
-				return &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: t.call(ctx, tool.Function.Name, args)}}}, nil, nil
-			})
-	}
-	return server
-}
-
-// handler serves the tools over streamable HTTP, to whoever holds the token.
-func (t *tradingTools) handler(token string) http.Handler {
-	server := t.server()
-	transport := mcp.NewStreamableHTTPHandler(func(*http.Request) *mcp.Server { return server }, nil)
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Header.Get("Authorization") != "Bearer "+token {
-			w.WriteHeader(http.StatusUnauthorized)
-			return
-		}
-		transport.ServeHTTP(w, r)
-	})
 }
 
 // call carries out one call and returns what the tool said. pi reports the
@@ -199,7 +173,7 @@ func (t *tradingTools) calculate(memory *chatMemory, chosen string) string {
 	turn := t.turn
 	t.mu.Unlock()
 	intent, named := chosen, calculatorNamed(turn.message)
-	if named != "" {
+	if named != "" && !t.explicit {
 		intent = named
 	}
 	// The prices a province publishes are read from a table, with its voltage
@@ -221,7 +195,7 @@ func (t *tradingTools) calculate(memory *chatMemory, chosen string) string {
 	if calculated {
 		return "这句话的数字没有变化，结果和上一次相同。请直接告诉用户结论；还缺数字的话，列出还缺什么，不要再调用计算。"
 	}
-	answer, toModel, err := t.flow.calculate(memory, turn, intent)
+	answer, toModel, err := t.flow.calculate(memory, turn, intent, t.explicit)
 	if err != nil {
 		return "无法计算：" + err.Error()
 	}
@@ -253,13 +227,6 @@ func (t *tradingTools) done(intent string) bool {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	return t.calculated[intent]
-}
-
-// doneCounting says whether the price tables were counted in the turn.
-func (t *tradingTools) doneCounting() bool {
-	t.mu.Lock()
-	defer t.mu.Unlock()
-	return t.counted
 }
 
 // lookup searches the handbook for the user's own words and for the model's
@@ -295,13 +262,6 @@ func (t *tradingTools) searchDocuments(ctx context.Context, query string) string
 		return "无法读取文件：" + err.Error()
 	}
 	return t.passages(found, notes)
-}
-
-// searchedDocuments says whether the documents were read in the turn.
-func (t *tradingTools) searchedDocuments() bool {
-	t.mu.Lock()
-	defer t.mu.Unlock()
-	return t.searched
 }
 
 // passages lays out what a search found for the model and keeps where each

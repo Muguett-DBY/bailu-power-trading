@@ -15,9 +15,6 @@ import (
 // scripts/make_tariff_data.py from data checked against the attachments of
 // the National Development and Reform Commission.
 
-// openFramework reads it from the framework before anything is looked up.
-var tariffText string
-
 // tariffRow is one line of a grid's table. A price stands as the attachment
 // prints it; a line without one has none.
 type tariffRow struct {
@@ -53,7 +50,12 @@ type tariffTables struct {
 func parseTariffs(text string) (*tariffTables, error) {
 	tables := &tariffTables{}
 	var notes *[]string
-	for _, line := range strings.Split(strings.TrimSpace(text), "\n") {
+	for number, raw := range strings.Split(strings.TrimSpace(text), "\n") {
+		// A line ends with a carriage return where the file was checked out with Windows line endings.
+		line := strings.TrimSpace(raw)
+		if line == "" {
+			continue
+		}
 		switch line[:1] {
 		case "@":
 			key, value, _ := strings.Cut(line[1:], " ")
@@ -83,6 +85,9 @@ func parseTariffs(text string) (*tariffTables, error) {
 				return nil, errors.New("省级电网输配电价表里不认识的行：" + line)
 			}
 		case "!":
+			if notes == nil {
+				return nil, fmt.Errorf("省级电网输配电价表里不认识的行（第 %d 行）：%s", number+1, line)
+			}
 			*notes = append(*notes, line[1:])
 		case "%":
 			grid, value, _ := strings.Cut(line[1:], "|")
@@ -146,11 +151,17 @@ var tariffPlaces = []struct {
 	{"新疆", []string{"新疆电网"}},
 }
 
-// named returns the grids a question names, in the order of the tables.
+// named returns the grids a question names, in the order of the tables. Of
+// the two grids of Inner Mongolia, the western or the eastern one alone is
+// meant when the question says which.
 func (t *tariffTables) named(query string) []int {
 	query = strings.ReplaceAll(query, " ", "")
 	var found []int
 	for i, grid := range t.grids {
+		if strings.HasPrefix(grid.name, "蒙") && (strings.Contains(query, "西部") && grid.name != "蒙西电网" ||
+			strings.Contains(query, "东部") && grid.name != "蒙东电网") {
+			continue
+		}
 		for _, place := range tariffPlaces {
 			if strings.Contains(query, place.word) && slices.Contains(place.grids, grid.name) {
 				found = append(found, i)
@@ -316,7 +327,7 @@ func (g *tariffGrid) table(ask tariffAsk) string {
 	for _, column := range ask.prices {
 		header = append(header, tariffHeaders[column])
 	}
-	fmt.Fprintf(&out, "| %s |\n|%s|\n", strings.Join(header, " | "), strings.Repeat("---|", len(header)))
+	fmt.Fprintf(&out, "| %s |\n|%s\n", strings.Join(header, " | "), strings.Repeat("---|", len(header)))
 	for _, row := range rows {
 		cells := []string{row.customer, row.billing + row.tier, row.voltage}
 		for _, column := range ask.prices {
@@ -328,21 +339,36 @@ func (g *tariffGrid) table(ask tariffAsk) string {
 }
 
 // lookup answers a question on the published prices of the grids it names:
-// the table of each, narrowed to what it asks for, or the coal capacity
-// prices when it speaks of coal. A question the tables do not answer is told
-// so.
+// the table of each, narrowed to what it asks for, the coal capacity prices
+// when it speaks of coal, and both when it asks for both. A question the
+// tables do not answer is told so.
 func (t *tariffTables) lookup(query string) string {
 	if !t.covered(query) {
 		return "这几张表里没有这一项。表里只有各省级电网的输配电价（电量电价、需量电价、容量电价）、各省的上网环节线损率，以及" + t.coalPeriod + "的煤电容量电价。"
 	}
 	named := t.named(query)
 	if len(named) == 0 {
+		// A province the tables do not hold is said so by name.
+		for _, province := range places {
+			if strings.Contains(query, province) {
+				return "表里没有" + province + "的输配电价。可以查：" + t.places() + "。"
+			}
+		}
 		return "没有说要查哪个省或电网。可以查：" + t.places() + "。"
 	}
 	if strings.Contains(query, "煤电") {
-		return t.coalTable(named)
+		// The prices of coal are asked for alone when no price of the grid's is named beside them.
+		gridsToo := containsAny(query, "输配电价", "电量电价", "需量电价", "线损率") || strings.Contains(query, "容量电价") && strings.Contains(query, "输配电价")
+		if !gridsToo {
+			return t.coalTable(named)
+		}
+		return t.coalTable(named) + "\n\n" + t.gridTables(named, tariffQuestion(query))
 	}
-	ask := tariffQuestion(query)
+	return t.gridTables(named, tariffQuestion(query))
+}
+
+// gridTables writes the prices of the grids named as the question asks for them.
+func (t *tariffTables) gridTables(named []int, ask tariffAsk) string {
 	out := []string{"**省级电网输配电价表**（自" + t.from + "起执行）"}
 	for _, i := range named {
 		grid := &t.grids[i]
@@ -363,7 +389,7 @@ func (t *tariffTables) coalTable(named []int) string {
 			out = append(out, fmt.Sprintf("| %s电网 | %s |", price.grid, price.value))
 		}
 	}
-	out = append(out, "单位："+t.coalUnit+"。\n来源："+t.coalDocument)
+	out = append(out, "单位："+t.coalUnit+"。\n来源："+t.coalDocument+"\n表里的数值是 "+t.coalPeriod+" 的；之后的数值以国家发展改革委和省级价格主管部门的最新文件为准。")
 	if len(t.coalNotes) > 0 {
 		out = append(out, "表注："+strings.Join(t.coalNotes, "\n"))
 	}

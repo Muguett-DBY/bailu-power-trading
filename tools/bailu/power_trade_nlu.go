@@ -522,7 +522,7 @@ func readBands(message string, numbers []stated, q *quantities) {
 			if number.kind == kindPrice {
 				value = readPrice(number.text)
 			} else {
-				value = readBarePrice(number.text)
+				value = readBarePrice(number.text, number.after)
 			}
 			if where == "energy" {
 				where = "tou"

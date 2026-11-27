@@ -37,6 +37,10 @@ const (
 var (
 	docExtensions = map[string]bool{".pdf": true, ".docx": true, ".txt": true, ".md": true}
 	docSkipDirs   = map[string]bool{"node_modules": true, "vendor": true, "dist": true, "build": true, "target": true, "__pycache__": true}
+	// frameworkFolders are what the framework holds beside its rules. Searched
+	// for a policy, they would answer with the handbook itself, and the user's
+	// own file would have to compete with a hundred others for a place.
+	frameworkFolders = map[string]bool{"skills": true, "knowledge": true, "docs": true, "tools": true, "scripts": true, "licenses": true}
 	// A page marker that extracted text cannot contain.
 	docPageMark = "\n\x1e"
 )
@@ -84,8 +88,17 @@ type docLibrary struct {
 	unreadable []string
 }
 
+// isFramework says whether a folder is a copy of the framework.
+func isFramework(dir string) bool {
+	_, err := os.Stat(filepath.Join(dir, "knowledge", "handbook"))
+	return err == nil
+}
+
 func collectDocs(root string) ([]docFile, error) {
 	var files []docFile
+	// A search that starts at the framework itself looks past its own folders; one
+	// that starts above a copy of it does not go into the copy.
+	inside := isFramework(root)
 	err := filepath.WalkDir(root, func(path string, entry fs.DirEntry, err error) error {
 		if err != nil {
 			return err
@@ -96,6 +109,7 @@ func collectDocs(root string) ([]docFile, error) {
 		}
 		if entry.IsDir() {
 			if path != root && (strings.HasPrefix(entry.Name(), ".") || docSkipDirs[entry.Name()] ||
+				inside && frameworkFolders[entry.Name()] || isFramework(path) && !isFramework(filepath.Dir(path)) ||
 				strings.Count(relative, string(filepath.Separator)) >= docMaxDepth) {
 				return fs.SkipDir
 			}

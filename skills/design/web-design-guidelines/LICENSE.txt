@@ -1,3 +1,24 @@
-This skill comes from https://github.com/vercel-labs/agent-skills
-(skills/web-design-guidelines/SKILL.md, commit 5a37a6329fbad3666c3207392a6a7c0110e92efb),
-whose README gives the license as MIT. The upstream repository has the terms.
+Source: https://github.com/vercel-labs/agent-skills, skills/web-design-guidelines,
+commit 5a37a6329fbad3666c3207392a6a7c0110e92efb. The upstream README declares the
+licence of this skill as MIT. It gives no copyright line and ships no licence
+file; the text below is the MIT License as the README names it.
+
+MIT License
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.

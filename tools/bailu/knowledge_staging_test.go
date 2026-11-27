@@ -50,13 +50,30 @@ func TestStagedKnowledgeQuotesTheOfficialDocuments(t *testing.T) {
 	if err := json.Unmarshal(kept, &foldersByAddress); err != nil {
 		t.Fatal(err)
 	}
-	texts := map[string]string{}
-	source := func(folder string) string {
-		if text, found := texts[folder]; found {
-			return text
+	keptDocuments := map[string][]keptDocument{}
+	source := func(folder string) []keptDocument {
+		if docs, found := keptDocuments[folder]; found {
+			return docs
 		}
 		entries, _ := os.ReadDir(filepath.Join(research, "sources", folder))
-		var all strings.Builder
+		var docs []keptDocument
+		// Each file of the folder is a document of its own: a notice that
+		// numbers its paragraphs "一、二、" beside the rule it prints, which
+		// numbers articles. Where such a paragraph opens on a line of its own
+		// is kept beside the text.
+		keep := func(text string) {
+			var all strings.Builder
+			var opens []opener
+			for _, line := range strings.Split(text, "\n") {
+				if match := lineOpening.FindStringSubmatch(line); match != nil {
+					if number, ok := numeralValue(match[1]); ok {
+						opens = append(opens, opener{at: all.Len(), mark: strconv.Itoa(number) + "条"})
+					}
+				}
+				all.WriteString(tighten(line))
+			}
+			docs = append(docs, keptDocument{text: all.String(), opens: opens})
+		}
 		for _, entry := range entries {
 			path := filepath.Join(research, "sources", folder, entry.Name())
 			switch filepath.Ext(path) {
@@ -68,9 +85,11 @@ func TestStagedKnowledgeQuotesTheOfficialDocuments(t *testing.T) {
 					t.Errorf("%s: %v", path, err)
 					continue
 				}
+				var all strings.Builder
 				for _, page := range pages {
 					all.WriteString(page.Text)
 				}
+				keep(all.String())
 			case ".doc", ".wps":
 				// A document in the format of a word processor is read as the
 				// UTF-16 text it holds, on either alignment, which is enough to
@@ -84,12 +103,12 @@ func TestStagedKnowledgeQuotesTheOfficialDocuments(t *testing.T) {
 					for i := range words {
 						words[i] = uint16(raw[from+2*i]) | uint16(raw[from+2*i+1])<<8
 					}
-					all.WriteString(string(utf16.Decode(words)))
+					keep(string(utf16.Decode(words)))
 				}
 			}
 		}
-		texts[folder] = tighten(all.String())
-		return texts[folder]
+		keptDocuments[folder] = docs
+		return docs
 	}
 	for _, file := range files {
 		if filepath.Ext(file.Name()) != ".md" || file.Name() == "RULES.md" {
@@ -138,7 +157,11 @@ func TestStagedKnowledgeQuotesTheOfficialDocuments(t *testing.T) {
 			// One line may hold two sentences, each in its own brackets.
 			for _, sentence := range strings.Split(match[1], "」「") {
 				quoted := tighten(sentence)
-				if !slices.ContainsFunc(folders, func(folder string) bool { return inProvision(source(folder), quoted, match[2]) }) {
+				if !slices.ContainsFunc(folders, func(folder string) bool {
+					return slices.ContainsFunc(source(folder), func(doc keptDocument) bool {
+						return inProvision(doc.text, doc.opens, quoted, match[2])
+					})
+				}) {
 					missing++
 					t.Errorf("%s: not found as written, or not in %s: %s", file.Name(), match[2], sentence)
 				}
@@ -169,9 +192,39 @@ func tighten(text string) string {
 	}, text)
 }
 
+// keptDocument is one document of a folder of sources: its tightened text and
+// the paragraphs of a notice in it that open on a line of their own.
+type keptDocument struct {
+	text  string
+	opens []opener
+}
+
+// opener is where, in the tightened text of a source, a paragraph of a notice
+// that numbers them "一、二、" opens at the start of a line of its own.
+type opener struct {
+	at   int
+	mark string
+}
+
+var lineOpening = regexp.MustCompile(`^([一二三四五六七八九十百]+)、`)
+
+// openedBefore tells whether the last paragraph of a notice opened before a
+// place of its text is one of those wanted.
+func openedBefore(end int, wanted map[string]bool, opens []opener) bool {
+	last := ""
+	for _, one := range opens {
+		if one.at > end {
+			break
+		}
+		last = one.mark
+	}
+	return last != "" && wanted[last]
+}
+
 // inProvision tells whether a sentence occurs in a document under one of the
 // provisions named after it, such as "第十条", "第十三条至第十六条" or "第一章".
-func inProvision(document, sentence, named string) bool {
+// opens are the paragraphs of a notice in that document.
+func inProvision(document string, opens []opener, sentence, named string) bool {
 	wanted := map[string]bool{}
 	for _, mark := range provisions(named) {
 		wanted[mark] = true
@@ -191,7 +244,8 @@ func inProvision(document, sentence, named string) bool {
 		}
 		// The last number before the sentence names its provision; a sentence
 		// quoted with its own number at its start is named by that.
-		if under(document[:at], wanted, paragraphs) || under(document[:at+len(sentence)], wanted, paragraphs) {
+		if under(document[:at], wanted, paragraphs) || under(document[:at+len(sentence)], wanted, paragraphs) ||
+			paragraphs && openedBefore(at+len(sentence), wanted, opens) {
 			return true
 		}
 		from = at + 1
@@ -202,7 +256,8 @@ func inProvision(document, sentence, named string) bool {
 var (
 	articles         = regexp.MustCompile(`第[零〇一二三四五六七八九十百两0-9]+条`)
 	articleOrChapter = regexp.MustCompile(`第([零〇一二三四五六七八九十百两0-9]+)([条章])`)
-	paragraph        = regexp.MustCompile(`(?:^|[。：])([一二三四五六七八九十百]+)、`)
+	// The paragraphs of a notice open at a sentence's end or at the start of a line.
+	paragraph = regexp.MustCompile(`(?m)(?:^|[。：])([一二三四五六七八九十百]+)、`)
 )
 
 // markers names, in order and by number and kind, every provision a stretch of

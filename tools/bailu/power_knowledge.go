@@ -139,6 +139,8 @@ type tokenMatch struct {
 // more than a common one.
 func (x *tokenIndex) rank(query string, limit int) ([]tokenMatch, int) {
 	results := make([]tokenMatch, len(x.docs))
+	// most is the rarity of the rarest term of the question each document holds.
+	most := make([]float64, len(x.docs))
 	for i := range results {
 		results[i].doc = i
 	}
@@ -154,6 +156,7 @@ func (x *tokenIndex) rank(query string, limit int) ([]tokenMatch, int) {
 				if weight := x.docs[i][token]; weight > 0 {
 					results[i].score += rarity * weight
 					results[i].matched++
+					most[i] = max(most[i], rarity)
 					if i < len(x.titles) && x.titles[i][token] > 0 {
 						results[i].score += rarity * titleBonus
 					}
@@ -191,6 +194,24 @@ func (x *tokenIndex) rank(query string, limit int) ([]tokenMatch, int) {
 	for i := range x.regional {
 		if place := x.regional[i]; place != "" && !strings.Contains(query, place) {
 			results[i].score *= placeShare
+		}
+	}
+	// A question that names no place at all is after what holds wherever one is.
+	// With a topic for every province, one of them keeps a quarter of its score
+	// when a topic of no place in particular holds a term of the question as
+	// specific as the rarest one it holds itself: the general topic then says
+	// what was asked for, and the provincial one adds how one province goes.
+	if !slices.ContainsFunc(x.regional, func(place string) bool { return place != "" && strings.Contains(query, place) }) {
+		general := 0.0
+		for i, place := range x.regional {
+			if place == "" && results[i].score > 0 {
+				general = max(general, most[i])
+			}
+		}
+		for i, place := range x.regional {
+			if place != "" && most[i] <= general {
+				results[i].score *= placeShareUnnamed
+			}
 		}
 	}
 	slices.SortStableFunc(results, func(left, right tokenMatch) int { return cmp.Compare(right.score, left.score) })
@@ -236,8 +257,12 @@ var places = []string{
 }
 
 // placeShare is what the score of a topic named after a place keeps when the
-// question names another place or none.
+// question names another place.
 const placeShare = 0.5
+
+// placeShareUnnamed is that share when the question names no place at all and
+// is after what holds wherever one is.
+const placeShareUnnamed = 0.25
 
 // placeOf gives the province or the region a title is named after, and "" when
 // it is named after none.

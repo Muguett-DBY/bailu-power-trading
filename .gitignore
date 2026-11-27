@@ -17,3 +17,6 @@ __pycache__/
 /docs/research/downloads/
 /docs/research/work/
 /.npm-cache/
+
+# What scripts/publish.py builds
+/.release/

@@ -277,7 +277,7 @@ var (
 	// An hour of the day labels an interval of a load curve.
 	qHour = regexp.MustCompile(`\d{1,2}\s*点(?:\s*(?:到|至|~|～|-|—)\s*(?:次日\s*)?\d{1,2}\s*点)?`)
 	// A price in yuan may be written down to the fen.
-	qPrice   = regexp.MustCompile(`(?i)(?:` + figures + `)\s*(?:元|圆|厘|分)?\s*/\s*(?:兆瓦时|mwh|千瓦时|kwh|度)`)
+	qPrice   = regexp.MustCompile(`(?i)(?:` + figures + `)\s*(?:元|圆|角|厘|分)?\s*/\s*(?:兆瓦时|mwh|千瓦时|kwh|度)`)
 	qEnergy  = regexp.MustCompile(`(?i)(?:` + figures + `)\s*(?:万)?\s*(?:千瓦时|kwh|兆瓦时|mwh|度)`)
 	qYuan    = regexp.MustCompile(`(?:` + figures + `)\s*(万)?\s*(?:元|圆)(?:\s*/\s*度)?`)
 	qPercent = regexp.MustCompile(`±?(?:` + figures + `)\s*[%％]`)
@@ -717,12 +717,8 @@ func readValue(number *stated) {
 		}
 	case kindPrice:
 		if number.kind == kindBare {
-			number.optional = readBarePrice(number.text)
-			// "加价 3 分" is three hundredths of a yuan and "偏差成本 5 厘" five thousandths.
-			if part := subYuan(number.after); number.set && !part.IsZero() {
-				number.value = number.value.Div(part)
-				number.optional.text = formatPrice(number.value) + " 元/千瓦时"
-			}
+			// "38分" is 0.38 yuan and "5厘" 0.005; a number with no such word is yuan/MWh from ten up.
+			number.optional = readBarePrice(number.text, number.after)
 		} else {
 			number.optional = readPrice(number.text)
 		}
@@ -760,6 +756,10 @@ func inUnit(number *stated, withUnit func(string) (decimal.Decimal, error), bare
 	case kindBare:
 		value, err = parseBareNumber(number.text)
 		value = value.Mul(bareScale)
+		// "330分/千伏安·月" is written in fen.
+		if part := subYuan(number.after); err == nil && !part.IsZero() {
+			value = value.Div(part)
+		}
 	case kindPrice:
 		if value, err = withUnit(number.text); err != nil {
 			value, err = plain(number.text)
@@ -772,7 +772,8 @@ func inUnit(number *stated, withUnit func(string) (decimal.Decimal, error), bare
 	}
 	// stated keeps the number as written in a text of its own; the unit it was
 	// read in belongs to the optional it carries.
-	number.optional = optional{value: value, text: text(value), set: true, bare: number.kind == kindBare}
+	// A number followed by 角, 分 or 厘 carries its unit in that word.
+	number.optional = optional{value: value, text: text(value), set: true, bare: number.kind == kindBare && subYuan(number.after).IsZero()}
 }
 
 // plain reads the figure of "33元" or of a number that carries no unit: the
@@ -783,10 +784,12 @@ func plain(text string) (decimal.Decimal, error) {
 }
 
 // subYuan is the part of a yuan that a bare number is written in where the
-// word after it says so: 分 is a hundredth, 厘 a thousandth. A 分 that begins
-// another word after the number, as in "2分成两份", says nothing: zero.
+// word after it says so: 角 is a tenth, 分 a hundredth, 厘 a thousandth. A 分
+// that begins another word after the number, as in "2分成两份", says nothing: zero.
 func subYuan(after string) decimal.Decimal {
 	switch {
+	case after == "角" || strings.HasPrefix(after, "角 ") || strings.HasPrefix(after, "角/") || strings.HasPrefix(after, "角钱"):
+		return ten
 	case after == "分" || strings.HasPrefix(after, "分 ") || strings.HasPrefix(after, "分/") || strings.HasPrefix(after, "分钱"):
 		return hundred
 	case after == "厘" || strings.HasPrefix(after, "厘 ") || strings.HasPrefix(after, "厘/"):
@@ -805,21 +808,31 @@ func readPrice(text string) optional {
 	if value, err := parsePrice(text); err == nil {
 		return optional{value: value, text: formatPrice(value) + " 元/千瓦时", set: true}
 	}
-	if value, err := parseBareNumber(strings.TrimSuffix(strings.TrimSuffix(text, "/度"), "元")); err == nil {
+	if value, err := parseBareNumber(strings.TrimRight(strings.TrimSuffix(text, "/度"), "元圆")); err == nil {
 		return optional{value: value, text: formatPrice(value) + " 元/千瓦时", set: true}
 	}
 	return optional{}
 }
 
-func readBarePrice(text string) optional {
+// readBarePrice reads a price written as a number alone. Where the word after
+// it names a part of a yuan the number is in that part; otherwise a number
+// from ten up is taken for yuan/MWh, as spot prices are written, and a smaller
+// one for yuan/kWh. bare says no unit was written.
+func readBarePrice(text, after string) optional {
 	value, err := parseBareNumber(strings.TrimSuffix(text, "元"))
 	if err != nil {
 		return optional{}
 	}
-	if !value.Abs().LessThan(decimal.NewFromInt(barePriceLimit)) {
-		value = value.Div(thousand)
+	part := subYuan(after)
+	unitWritten := !part.IsZero()
+	if !unitWritten {
+		part = one
+		if !value.Abs().LessThan(decimal.NewFromInt(barePriceLimit)) {
+			part = thousand
+		}
 	}
-	return optional{value: value, text: formatPrice(value) + " 元/千瓦时", set: true, bare: true}
+	value = value.Div(part)
+	return optional{value: value, text: formatPrice(value) + " 元/千瓦时", set: true, bare: !unitWritten}
 }
 
 // readBareEnergy reads a volume written without its unit, next to a word that
@@ -860,7 +873,7 @@ func readTiers(numbers []stated) []tierQuantity {
 		case volume:
 			tier.energy, tier.problem = readBareEnergy(number.text, decimal.NewFromInt(1), "千瓦时"), "电价"
 		case number.kind == kindBare:
-			tier.price, tier.problem = readBarePrice(number.text), "用电量"
+			tier.price, tier.problem = readBarePrice(number.text, number.after), "用电量"
 		default:
 			tier.price, tier.problem = readPrice(number.text), "用电量"
 		}
@@ -875,7 +888,7 @@ func readTiers(numbers []stated) []tierQuantity {
 			i++
 			price := numbers[i]
 			if price.kind == kindBare {
-				tier.price = readBarePrice(price.text)
+				tier.price = readBarePrice(price.text, price.after)
 			} else {
 				tier.price = readPrice(price.text)
 			}
