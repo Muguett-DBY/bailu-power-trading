@@ -22,7 +22,8 @@
 
 | 放进项目的东西 | 位置 | 作用 |
 | --- | --- | --- |
-| 技能 | `.agents/skills/`（或你的 agent 自己的技能目录） | 31 个技能，agent 按任务加载 |
+| 技能 | `.agents/skills/`（或你的 agent 自己的技能目录） | 32 个技能，agent 按任务加载 |
+| Pi 项目扩展 | `.pi/extensions/bailu-ask-user.ts` | 给当前项目提供交互提问工具 |
 | 规则 | 项目根目录的 `AGENTS.md`（Claude Code 另有 `CLAUDE.md` 指向它） | 告诉 agent 读框架的守则、`bailu` 在哪里 |
 | 框架 | 项目根目录或 `bailu-power-trading/` | 手册、官方文件库、ECNote 快照、工具、脚本 |
 | 记录 | `.bailu-install.json` | 记下放入了什么，卸载时用 |
@@ -44,6 +45,12 @@
 从 v0.4.0 起，在项目对话里说「以后结算简报先给结论」或「纠正一下，本项目总表的购电量在 C 列」，支持项目规则和工具调用的 Agent 会按 `project-memory` 技能记录。后来再次处理同类任务时会按需查询。再次纠正同一事项时更新原记录。也可以直接问「这个项目记住了什么」或说「忘掉结算简报格式」。
 
 记录保存在当前项目的 `.bailu-memory/`，升级和卸载都会保留，常规 Git 操作会忽略该目录。每条纠正可以标明适用范围及来源。项目内表名、列名和内部口径可按用户确认更新；发布机关的规则仍需核验原文，缺少依据的纠正可作为待核实线索。公共手册与政策库继续走原有核验流程。
+
+## 需求澄清
+
+遇到会明显改变结论或交付的歧义时，Agent 用 `clarify-request` 技能优先确认一个关键问题。适合做选择时给两到三个选项，推荐项放首位并说明影响。地区、账期、金额等事实根据已有资料确认，资料不足就直接问。容易调整的小决定由 Agent 按当前任务推进。
+
+部署会把 `bailu_ask_user` 放进项目自己的 `.pi/extensions/`。Pi 在有交互界面并允许加载项目扩展时显示选项，也允许自行填写。其他 Agent 可使用自己的提问界面，缺少界面时用普通对话。取消不会自动采用推荐项。项目扩展不改变 Pi 程序或用户级配置。
 
 ## 能做什么
 
@@ -82,9 +89,10 @@
 ## 目录
 
 ```
-AGENTS.md              给 agent 的工作守则：铁律、全部命令、技能清单、知识库范围
+AGENTS.md              给 agent 的工作规则和任务入口
+docs/agent-reference.md  按需读取的命令、技能和知识库说明
 skills/
-  power-trading/       15 个电力交易和项目记忆技能
+  power-trading/       16 个交易、项目记忆和需求澄清技能
   office/              5 个办公技能，其中 4 个来自 anthropics/skills
   design/              5 个设计技能
   data/                6 个数据技能（来自 anthropics/knowledge-work-plugins、anthropics/financial-services）
@@ -97,6 +105,7 @@ knowledge/
 tools/bailu/           bailu 工具的 Go 源码和测试
 analysis/              可选的分析层：基线预测、回测
 office/                可选的办公层：按位置读原文、跨格式交付
+integrations/pi/       项目级提问扩展及模拟测试
 scripts/
   bootstrap.py         跨镜像部署、检查更新和升级
   deploy.py            部署与卸载
@@ -151,6 +160,8 @@ LICENSE  NOTICE.md     MIT；第三方声明
 ## 测试情况
 
 v0.4.0 增加了项目记忆回归，覆盖保存、同一主题更新、隔离、删除与升级后保留。
+
+提问工具可用 Node.js 22.18+ 运行 `node --test integrations/pi/bailu-ask-user.test.mjs` 模拟验证选择、自填、取消和普通对话回退。部署测试覆盖安装、更新、回滚和卸载时的项目范围。
 
 v0.3.1 覆盖双镜像选版、交易复盘及公式证据。同日计量按电量加权，日前成交与同方向申报只计一次。对账区分业务数据缺失和公式无可用缓存。发布流程运行 Go、部署、办公与分析测试。
 

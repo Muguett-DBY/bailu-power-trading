@@ -24,7 +24,8 @@ The deployment is **self-contained**: everything stays in the folder. No global 
 
 | What lands in the project | Where | What it is for |
 | --- | --- | --- |
-| Skills | `.agents/skills/` (or your agent's own skills folder) | 31 skills the agent loads as needed |
+| Skills | `.agents/skills/` (or your agent's own skills folder) | 32 skills the agent loads as needed |
+| Pi project extension | `.pi/extensions/bailu-ask-user.ts` | An interactive question tool for the current project |
 | Rules | `AGENTS.md` at the project root (`CLAUDE.md` points to it for Claude Code) | Tells the agent to read the framework's rules and where `bailu` is |
 | Framework | Project root or `bailu-power-trading/` | Handbook, official documents, ECNote snapshot, tool, scripts |
 | Record | `.bailu-install.json` | What was added, for uninstalling |
@@ -46,6 +47,10 @@ With v0.3.0 or later installed, run `python scripts/bootstrap.py --project <proj
 From v0.4.0, tell an agent that reads project instructions and can run commands “Use a conclusion-first format for settlement reports from now on” or “Correction: our summary table uses column C for purchased electricity.” Its `project-memory` skill records the durable preference or project fact and recalls it for relevant tasks. A correction to the same item replaces its previous value. Ask what was recorded or ask the agent to forget a specific item.
 
 Records live in the workspace's `.bailu-memory/` directory, which normal Git operations ignore. Updates and uninstallation preserve the project's records. A correction can carry a scope and a source. For market rules and tariffs, check the applicable official text and treat an unverified correction as a lead.
+
+## Clarifying a request
+
+The `clarify-request` skill asks one consequential question by default. When a decision has clear alternatives, it offers two or three and explains the first recommendation. Questions about market facts depend on evidence. The project-local Pi extension supplies `bailu_ask_user` when the host has a UI and allows project extensions. Other agents can use their native question tools or ask in chat. Closing the dialog leaves the decision open.
 
 ## What it does
 
@@ -73,9 +78,10 @@ See the [workflow coverage](docs/workflow-coverage.md) for inputs, tools and lim
 ## Layout
 
 ```
-AGENTS.md              The rules for any agent: iron rules, every command, the skills, what the knowledge base covers
+AGENTS.md              Short project rules and task entry points
+docs/agent-reference.md  Commands, skills and knowledge coverage to consult as needed
 skills/
-  power-trading/       15 power-trading and project memory skills
+  power-trading/       16 trading, project memory and clarification skills
   office/              5 office skills, 4 from anthropics/skills
   design/              5 design skills
   data/                6 data skills (from anthropics/knowledge-work-plugins, anthropics/financial-services)
@@ -88,6 +94,7 @@ knowledge/
 tools/bailu/           The Go source and tests of the bailu tool
 analysis/              The optional analysis layer: baseline forecasts, back-tests
 office/                Optional file readers and cross-format reporting
+integrations/pi/       Project-local question tool and mock tests
 scripts/
   bootstrap.py         Deploy and upgrade from the public mirrors
   deploy.py            Deploy and uninstall
@@ -138,6 +145,8 @@ To add to or update the handbook, the pipeline is in `scripts/`: `fetch_cited_so
 ## What was tested
 
 v0.4.0 tests recording, updating, isolating, removing and retaining project memory through a framework upgrade.
+
+Run `node --test integrations/pi/bailu-ask-user.test.mjs` on Node.js 22.18+ to exercise the question tool against a mock UI. Deployment tests cover the project extension's installation, replacement, rollback and removal.
 
 v0.3.1 adds coverage for comparing mirror revisions, volume-weighted metering, confirmed day-ahead fills, strict data validation, and the source and cache state of settlement formulas.
 

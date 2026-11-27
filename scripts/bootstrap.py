@@ -272,6 +272,10 @@ def apply_update(project: Path, source: Path, tip: str, current: str, mirror: st
         raise SystemExit("预检期间框架源码发生修改，请保存修改后重试。")
     names = {entry.parent.name for entry in (preview / "skills").glob("*/*/SKILL.md")}
     files = [project / name for name in (MANIFEST, "AGENTS.md", "CLAUDE.md", "GEMINI.md") if name != "AGENTS.md" or project != source]
+    pi_extension = project / ".pi/extensions/bailu-ask-user.ts"
+    if (directories and (preview / "integrations/pi/bailu-ask-user.ts").is_file()
+            and not pi_extension.is_symlink() and pi_extension.resolve().is_relative_to(project)):
+        files.append(pi_extension)
     files.append(binary)
     files.extend(project_path(project, directory) / name for directory in directories for name in sorted(names))
     relative = [path.relative_to(project) for path in dict.fromkeys(files)]

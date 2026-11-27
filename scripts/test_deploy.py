@@ -142,6 +142,47 @@ class DeploymentTest(unittest.TestCase):
         self.assertTrue(local.is_file())
         self.assertEqual(memory.read_text(encoding="utf-8"), '{"key":"report style","value":"decision first"}')
 
+    def test_pi_extension_follows_the_project_deployment_and_preserves_local_edits(self):
+        project = self.home / "project"
+        framework = self.framework_at(project / "bailu-power-trading")
+        source = framework / self.deploy.PI_SUPPORT
+        source.parent.mkdir(parents=True)
+        source.write_bytes(b"owned extension v1")
+        target = project / self.deploy.PI_EXTENSION
+        target.parent.mkdir(parents=True)
+        settings = project / ".pi" / "settings.json"
+        settings.write_bytes(b"{\"local\":true}")
+
+        record = self.deploy_into(project, with_skills=False)
+        self.assertNotIn(self.deploy.PI_EXTENSION, record["files"])
+        self.assertFalse(target.exists())
+        record = self.deploy_into(project)
+        self.assertIn(self.deploy.PI_EXTENSION, record["files"])
+        self.assertEqual(target.read_bytes(), b"owned extension v1")
+        source.write_bytes(b"owned extension v2")
+        self.deploy_into(project)
+        self.assertEqual(target.read_bytes(), b"owned extension v2")
+        target.write_bytes(b"user edited extension")
+        self.deploy_into(project)
+        self.quietly(self.deploy.uninstall, project)
+        self.assertEqual(target.read_bytes(), b"user edited extension")
+        self.assertEqual(settings.read_bytes(), b"{\"local\":true}")
+
+    def test_uninstall_only_removes_its_owned_pi_extension(self):
+        project = self.home / "project"
+        framework = self.framework_at(project / "bailu-power-trading")
+        source = framework / self.deploy.PI_SUPPORT
+        source.parent.mkdir(parents=True)
+        source.write_bytes(b"extension")
+        target = project / self.deploy.PI_EXTENSION
+        target.parent.mkdir(parents=True)
+        other = target.with_name("another-extension.ts")
+        other.write_bytes(b"another extension")
+        self.deploy_into(project)
+        self.quietly(self.deploy.uninstall, project)
+        self.assertFalse(target.exists())
+        self.assertEqual(other.read_bytes(), b"another extension")
+
     def test_stale_tool_is_replaced_only_after_a_valid_mirror_supplies_its_successor(self):
         framework = self.framework_at(self.home / "bailu-power-trading")
         tool = framework / ".bailu" / "bin" / "bailu.exe"

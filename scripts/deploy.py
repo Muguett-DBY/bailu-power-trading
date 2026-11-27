@@ -51,6 +51,8 @@ SKILL_GROUPS = ("power-trading", "office", "design", "data")
 CONVENTIONS = {".claude": ".claude/skills", ".cursor": ".cursor/skills", ".codebuddy": ".codebuddy/skills",
                ".gemini": ".gemini/skills", ".windsurf": ".windsurf/skills"}
 RULES = (("AGENTS.md", None), ("CLAUDE.md", "@AGENTS.md\n"), ("GEMINI.md", "@AGENTS.md\n"))
+PI_SUPPORT = "integrations/pi/bailu-ask-user.ts"
+PI_EXTENSION = ".pi/extensions/bailu-ask-user.ts"
 
 
 def system() -> str:
@@ -212,7 +214,7 @@ def rules(project: Path, framework: str, tool: str, hashes: dict | None = None) 
     are; a file of the project's own is left as it is."""
     own = framework == "."
     where = "AGENTS.md" if own else framework + "/AGENTS.md"
-    pointer = f"- 先完整读 `{where}`，之后在这个项目里一直遵守它；其中说明了 bailu 工具的用法和技能清单。\n"
+    pointer = f"- 先读 `{where}`，按其中的规则和任务入口工作。\n"
     if tool:
         pointer += f"- bailu 工具：`{tool}`（相对项目根目录）；规则里的 `bailu` 都指它。\n"
     else:
@@ -250,6 +252,29 @@ def installed_skills(record: dict) -> dict:
     if isinstance(skills, list):  # the record of the first release
         return {folder: skills for folder in record.get("skillsDirs", [])}
     return skills
+
+
+def deploy_pi_extension(project: Path, hashes: dict) -> list[str]:
+    source = FRAMEWORK / PI_SUPPORT
+    if not source.is_file():
+        return []
+    target = project / PI_EXTENSION
+    if target.is_symlink() or not target.resolve().is_relative_to(project):
+        print(f"项目扩展 {PI_EXTENSION} 指向其他位置，保留当前文件。")
+        return []
+    body = source.read_bytes()
+    if target.exists():
+        if not target.is_file() or hashes.get(PI_EXTENSION) != digest_of(target):
+            print(f"项目扩展 {PI_EXTENSION} 已存在，保留当前文件。")
+            return []
+        if target.read_bytes() == body:
+            return []
+    target.parent.mkdir(parents=True, exist_ok=True)
+    with tempfile.TemporaryDirectory(dir=target.parent) as stage:
+        staged = Path(stage) / target.name
+        staged.write_bytes(body)
+        staged.replace(target)
+    return [PI_EXTENSION]
 
 
 def copy_skills(project: Path, folders: list, manifest: dict, force: bool) -> None:
@@ -316,6 +341,8 @@ def deploy(project: Path, skills: list, with_skills: bool, with_tool: bool, forc
         others = [entry.name for entry in project.iterdir() if entry.name not in (FRAMEWORK.name, MANIFEST)]
         if others:
             written = [folder.relative_to(project).as_posix() for folder in skills] + [name for name, _ in RULES if not (project / name).exists()]
+            if with_skills and (FRAMEWORK / PI_SUPPORT).is_file():
+                written.append(PI_EXTENSION)
             written += [framework + "/.bailu", MANIFEST]
             print(f"注意：{project} 里已经有 {len(others)} 项别的东西，不会改动它们。部署只写入：" + "、".join(written))
     manifest = {"framework": framework, "skills": installed_skills(earlier), "skillHashes": earlier.get("skillHashes", {}),
@@ -332,11 +359,14 @@ def deploy(project: Path, skills: list, with_skills: bool, with_tool: bool, forc
         manifest["toolOrigin"] = earlier.get("toolOrigin", "之前放入的")
     if with_skills:
         copy_skills(project, skills, manifest, force)
-    written = rules(project, framework, manifest.get("tool", ""), earlier.get("hashes", {}))
+    previous_hashes = earlier.get("hashes", {})
+    written = rules(project, framework, manifest.get("tool", ""), previous_hashes)
+    if with_skills:
+        written.extend(deploy_pi_extension(project, previous_hashes))
     # A rule file an earlier run wrote and this one left in place is still the deployment's.
     manifest["files"] = written + [name for name in earlier.get("files", []) if name not in written and (project / name).is_file()]
     # What each rule file held when it was written: one changed since is the user's by then.
-    manifest["hashes"] = {name: digest for name, digest in earlier.get("hashes", {}).items() if name in manifest["files"]}
+    manifest["hashes"] = {name: digest for name, digest in previous_hashes.items() if name in manifest["files"]}
     for name in written:
         manifest["hashes"][name] = digest_of(project / name)
     with tempfile.TemporaryDirectory(dir=project) as stage:
@@ -352,7 +382,7 @@ def deploy(project: Path, skills: list, with_skills: bool, with_tool: bool, forc
         print("  技能：没有复制（--no-skills）" if not with_skills else "  技能：项目里都已有了，这次没有新复制")
     print(f"  工具：{manifest.get('tool', '未安装（--no-tool）')}" + (f"（{manifest['toolOrigin']}）" if "tool" in manifest else ""))
     for name in manifest["files"]:
-        print(f"  规则：{name}")
+        print(f"  项目扩展：{name}" if name == PI_EXTENSION else f"  规则：{name}")
     print(f"卸载：\"{sys.executable}\" scripts/deploy.py --uninstall --project \"{project}\"（框架文件夹本身保留）")
 
 
@@ -374,7 +404,7 @@ def uninstall(project: Path) -> None:
                 raise SystemExit(f"部署记录中的技能名称无效：{name}")
             skills.append(inside(project, skill_dir / name))
     rule_names = manifest.get("files", [])
-    if set(rule_names).difference(name for name, _ in RULES):
+    if set(rule_names).difference([name for name, _ in RULES] + [PI_EXTENSION]):
         raise SystemExit("部署记录包含未知的规则文件。")
     rules = [inside(project, project / name) for name in rule_names]
     installed_tool = inside(project, project / manifest["tool"]) if manifest.get("tool") else None
@@ -397,7 +427,7 @@ def uninstall(project: Path) -> None:
     if installed_tool and installed_tool.parent == tool_dir and installed_tool.name in ("bailu", "bailu.exe"):
         installed_tool.unlink(missing_ok=True)
     path.unlink()
-    print("已清理部署记录及其管理的技能、规则文件和缓存工具。")
+    print("已清理部署记录及其管理的技能、规则、项目扩展和缓存工具。")
     if changed:
         print("这些技能或规则文件在部署后被改动过，已保留：" + "、".join(changed))
     if manifest.get("backups"):
