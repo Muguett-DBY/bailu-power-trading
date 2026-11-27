@@ -2,9 +2,10 @@ import json
 from pathlib import Path
 import tempfile
 import unittest
+from zipfile import ZipFile
 
 from docx import Document
-from openpyxl import load_workbook
+from openpyxl import Workbook, load_workbook
 from pptx import Presentation
 from pypdf import PdfWriter
 
@@ -13,6 +14,25 @@ from report import load_report, settlement_report, write_reports
 
 
 class OfficeTest(unittest.TestCase):
+    def test_excel_reads_actual_rows_and_columns_beyond_declared_dimensions(self):
+        with tempfile.TemporaryDirectory() as temp:
+            original = Path(temp) / "original.xlsx"
+            exported = Path(temp) / "summary.xlsx"
+            book = Workbook()
+            book.active["A1"] = "月份"
+            book.active["C3"] = 120
+            book.save(original)
+            with ZipFile(original) as source, ZipFile(exported, "w") as target:
+                for name in source.namelist():
+                    data = source.read(name)
+                    if name == "xl/worksheets/sheet1.xml":
+                        data = data.replace(b'<dimension ref="A1:C3"', b'<dimension ref="A1"')
+                    target.writestr(name, data)
+            self.assertEqual(read_file.excel(exported, 2, 3, None)["rows"], [
+                {"row": 2, "cells": []}, {"row": 3, "cells": [None, None, 120]},
+            ])
+            self.assertEqual(read_file.excel(exported, 4, 3, None)["rows"], [])
+
     def test_one_source_three_outputs(self):
         with tempfile.TemporaryDirectory() as temp:
             base = Path(temp) / "2026.11结算"

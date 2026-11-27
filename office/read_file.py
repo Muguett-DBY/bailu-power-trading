@@ -1,6 +1,7 @@
 """Read a bounded window of evidence and retain the original positions."""
 
 import argparse
+from contextlib import closing
 from itertools import islice
 import json
 from pathlib import Path
@@ -30,14 +31,14 @@ def excel(path, start, limit, sheet):
     book = load_workbook(path, read_only=True, data_only=False)
     try:
         selected = book[sheet] if sheet else book.active
-        last = start + limit - 1
-        if selected.max_row is not None:
-            last = min(last, selected.max_row)
+        # Exporters may emit dimensions (such as A1) smaller than the actual grid.
+        selected.reset_dimensions()
+        with closing(selected.iter_rows(min_row=start, values_only=True)) as rows:
+            window = cells(islice(rows, limit), start)
         return {
             "sheets": book.sheetnames,
             "sheet": selected.title,
-            "max_row": selected.max_row,
-            "rows": cells(selected.iter_rows(min_row=start, max_row=last, values_only=True), start) if start <= last else [],
+            "rows": window,
         }
     finally:
         book.close()
