@@ -209,6 +209,13 @@ def deploy(project: Path, skills: list, with_skills: bool, with_tool: bool, forc
     was = earlier.get("skills")
     if isinstance(was, list):  # the record of the first release
         was = {folder: was for folder in earlier.get("skillsDirs", [])}
+    if not earlier and framework != ".":
+        # The framework was cloned into a folder that is somebody's already: say what will be written there.
+        others = [entry.name for entry in project.iterdir() if entry.name not in (FRAMEWORK.name, MANIFEST)]
+        if others:
+            written = [folder.relative_to(project).as_posix() for folder in skills] + [name for name, _ in RULES if not (project / name).exists()]
+            written += [framework + "/.bailu", MANIFEST]
+            print(f"注意：{project} 里已经有 {len(others)} 项别的东西，不会改动它们。部署只写入：" + "、".join(written))
     manifest = {"framework": framework, "skills": was or {}, "backups": earlier.get("backups", {}), "files": []}
     if with_skills:
         for folder in skills:
@@ -295,11 +302,12 @@ def main() -> None:
         project = Path(options.project).resolve()
     elif default == FRAMEWORK:
         project = default
-    elif any(entry.name != FRAMEWORK.name and entry.name != MANIFEST for entry in default.iterdir()):
-        # A clone made into a folder that is somebody's already: what else is in it is not the deployment's to touch.
-        raise SystemExit(f"框架所在的上级文件夹（{default}）里还有别的东西。请用 --project 指明要部署到哪个项目文件夹。")
     else:
         project = default
+        # Rules written into a home folder would reach every project on the machine.
+        home = Path.home().resolve()
+        if not (project / MANIFEST).is_file() and (project == home or project in home.parents):
+            raise SystemExit(f"框架所在的上级文件夹是用户目录（{project}），规则文件不能写在这里。请用 --project 指明要部署到哪个项目文件夹。")
     project.mkdir(parents=True, exist_ok=True)
     if options.uninstall:
         uninstall(project)
